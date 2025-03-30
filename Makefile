@@ -27,14 +27,14 @@ install:          ## Install the project in dev mode.
 .PHONY: fmt
 fmt:              ## Format code using black & isort.
 	$(ENV_PREFIX)isort evo_cli/
-	$(ENV_PREFIX)black -l 79 evo_cli/
-	$(ENV_PREFIX)black -l 79 tests/
+	$(ENV_PREFIX)black -l 120 evo_cli/
+	$(ENV_PREFIX)black -l 120 tests/
 
 .PHONY: lint
 lint:             ## Run pep8, black, mypy linters.
 	$(ENV_PREFIX)flake8 evo_cli/
-	$(ENV_PREFIX)black -l 79 --check evo_cli/
-	$(ENV_PREFIX)black -l 79 --check tests/
+	$(ENV_PREFIX)black -l 120 --check evo_cli/
+	$(ENV_PREFIX)black -l 120 --check tests/
 	$(ENV_PREFIX)mypy --ignore-missing-imports evo_cli/
 
 .PHONY: test
