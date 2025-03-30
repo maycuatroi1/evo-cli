@@ -11,51 +11,32 @@ Awesome evo_cli created by maycuatroi
 pip install evo_cli
 ```
 
-## Usage
+### Available Commands
 
-```py
-from evo_cli import BaseClass
-from evo_cli import base_function
+#### SSH Setup
 
-BaseClass().base_method()
-base_function()
-```
+Set up SSH with key-based authentication:
 
 ```bash
-$ python -m evo_cli
-#or
-$ evo_cli
+evo setupssh
 ```
 
-## Development
+Options:
+- `-H, --host` - SSH server hostname or IP address
+- `-u, --user` - SSH username
+- `-p, --password` - SSH password (not recommended, use interactive mode instead)
+- `-i, --identity` - Path to existing identity file to use
+- `--help-examples` - Show usage examples
 
-Read the [CONTRIBUTING.md](CONTRIBUTING.md) file.
+#### Miniconda Installation
 
-## Automatic Release to PyPI
+Install Miniconda with cross-platform support:
 
-This project is configured to automatically release to PyPI when changes are pushed to the main branch. The process:
+```bash
+evo miniconda
+```
 
-1. Automatically bumps the version based on commit messages:
-   - Commits with "BREAKING CHANGE" trigger a major version bump
-   - Commits with "feat" trigger a minor version bump
-   - All other commits trigger a patch version bump
-
-2. Builds and publishes the package to PyPI
-
-3. Creates a GitHub release with auto-generated release notes
-
-### Setup Requirements
-
-To enable automatic PyPI releases, you need to:
-
-1. Create a PyPI API token:
-   - Go to https://pypi.org/manage/account/token/
-   - Create a new token with scope "Entire account"
-   - Copy the token value
-
-2. Add the token to your GitHub repository secrets:
-   - Go to your GitHub repository → Settings → Secrets and variables → Actions
-   - Create a new repository secret named `PYPI_API_TOKEN`
-   - Paste your PyPI token as the value
-
-After these steps, the automated release process will work whenever changes are pushed to the main branch.
+Options:
+- `-p, --prefix` - Installation directory (default: ~/miniconda3 or %USERPROFILE%\miniconda3)
+- `-f, --force` - Force reinstallation even if Miniconda is already installed
+- `--help-examples` - Show usage examples

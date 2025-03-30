@@ -10,7 +10,8 @@ Be creative! do whatever you want!
 
 import argparse
 import sys
-from evo_cli.ssh_setup import setup_ssh, show_usage
+from evo_cli.ssh_setup import setup_ssh, show_usage as show_ssh_usage
+from evo_cli.miniconda_setup import install_miniconda, show_usage as show_miniconda_usage
 
 def main():  # pragma: no cover
     """
@@ -50,12 +51,27 @@ def main():  # pragma: no cover
         ssh_args = ssh_parser.parse_args(sys.argv[2:])
         
         if ssh_args.help_examples:
-            show_usage()
+            show_ssh_usage()
             return
             
         setup_ssh(ssh_args)
+    elif args.command == "miniconda":
+        # Parse arguments for miniconda installation
+        miniconda_parser = argparse.ArgumentParser(description="Install Miniconda with OS-specific settings")
+        miniconda_parser.add_argument('-p', '--prefix', help='Installation directory')
+        miniconda_parser.add_argument('-f', '--force', action='store_true', help='Force reinstallation')
+        miniconda_parser.add_argument('--help-examples', action='store_true', help='Show usage examples')
+        
+        miniconda_args = miniconda_parser.parse_args(sys.argv[2:])
+        
+        if miniconda_args.help_examples:
+            show_miniconda_usage()
+            return
+            
+        install_miniconda(miniconda_args)
     else:
         print(f"Unknown command: {args.command}")
         print("Available commands:")
-        print("  setupssh - Set up SSH key-based authentication")
+        print("  setupssh  - Set up SSH key-based authentication")
+        print("  miniconda - Install Miniconda (cross-platform)")
         parser.print_help()
