@@ -45,6 +45,7 @@ def main():  # pragma: no cover
         ssh_parser.add_argument('-H', '--host', help='SSH server hostname or IP address')
         ssh_parser.add_argument('-u', '--user', help='SSH username')
         ssh_parser.add_argument('-p', '--password', help='SSH password (not recommended, use interactive mode instead)')
+        ssh_parser.add_argument('-P', '--port', type=int, default=22, help='SSH port (default: 22)')
         ssh_parser.add_argument('-i', '--identity', help='Path to existing identity file to use')
         ssh_parser.add_argument('--help-examples', action='store_true', help='Show usage examples')
         

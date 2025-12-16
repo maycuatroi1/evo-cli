@@ -17,16 +17,17 @@ from pathlib import Path
 import subprocess
 import argparse
 
-def connect_ssh(hostname, username, password):
+def connect_ssh(hostname, username, password, port=22):
     """Connect to SSH server using provided credentials."""
     try:
         # Create SSH client
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
+
         # Connect to server
-        print(f"Connecting to {hostname} as {username}...")
-        client.connect(hostname=hostname, username=username, password=password)
+        port_info = f":{port}" if port != 22 else ""
+        print(f"Connecting to {hostname}{port_info} as {username}...")
+        client.connect(hostname=hostname, username=username, password=password, port=port)
         
         print("Connection successful!")
         
@@ -96,21 +97,22 @@ def upload_ssh_key(client, pub_key_path):
         print(f"Error uploading SSH key: {str(e)}")
         return False
 
-def save_to_ssh_config(hostname, username, identity_file):
+def save_to_ssh_config(hostname, username, identity_file, port=22):
     """Save SSH credentials to ~/.ssh/config file."""
     try:
         # Get path to SSH config file
         ssh_dir = Path.home() / ".ssh"
         ssh_config_path = ssh_dir / "config"
-        
+
         # Create .ssh directory if it doesn't exist
         os.makedirs(ssh_dir, exist_ok=True)
-        
+
         # Prepare config entry
+        port_line = f"  Port {port}\n" if port != 22 else ""
         config_entry = f"""
 Host {hostname}
   HostName {hostname}
-  User {username}
+{port_line}  User {username}
   IdentityFile {identity_file}
 """
         
@@ -141,16 +143,21 @@ def setup_ssh(args=None):
         parser.add_argument('-H', '--host', help='SSH server hostname or IP address')
         parser.add_argument('-u', '--user', help='SSH username')
         parser.add_argument('-p', '--password', help='SSH password (not recommended, use interactive mode instead)')
+        parser.add_argument('-P', '--port', type=int, default=22, help='SSH port (default: 22)')
         parser.add_argument('-i', '--identity', help='Path to existing identity file to use')
         args = parser.parse_args()
-    
+
+    # Get port from args (default to 22)
+    port = getattr(args, 'port', 22) or 22
+
     # Get credentials from arguments or prompt the user
     if args.host and args.user and args.password:
         # Use command line arguments
         hostname = args.host
         username = args.user
         password = args.password
-        print(f"Using provided credentials for {username}@{hostname}")
+        port_info = f":{port}" if port != 22 else ""
+        print(f"Using provided credentials for {username}@{hostname}{port_info}")
     else:
         # Get user input for credentials
         print("Enter SSH connection details:")
@@ -177,17 +184,17 @@ def setup_ssh(args=None):
             return
     
     # Connect to SSH server
-    client = connect_ssh(hostname, username, password)
+    client = connect_ssh(hostname, username, password, port)
     if not client:
         print("SSH connection failed. Exiting.")
         return
-    
+
     # Upload SSH key to server
     if upload_ssh_key(client, public_key_path):
         # Close the connection
         client.close()
         # Save to SSH config with identity file
-        save_to_ssh_config(hostname, username, str(private_key_path))
+        save_to_ssh_config(hostname, username, str(private_key_path), port)
     else:
         client.close()
         print("Failed to set up passwordless authentication.")
@@ -203,10 +210,16 @@ This script helps you set up SSH key-based authentication for password-less logi
 Usage examples:
   1. Interactive mode:
      evo setupssh
-  
+
   2. Command line mode:
      evo setupssh -H 42.96.16.233 -u root -p YourPassword
-     
-  3. Use existing identity file:
+
+  3. Use custom SSH port:
+     evo setupssh -H 42.96.16.233 -u root -p YourPassword -P 2222
+
+  4. Use existing identity file:
      evo setupssh -H 42.96.16.233 -u root -p YourPassword -i /path/to/private_key
+
+  5. Use custom port with existing identity file:
+     evo setupssh -H 42.96.16.233 -u root -p YourPassword -P 2222 -i /path/to/private_key
 """) 
