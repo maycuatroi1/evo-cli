@@ -1,4 +1,5 @@
 """SSH key setup functionality for EVO CLI."""
+
 import os
 import warnings
 
@@ -6,16 +7,18 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 try:
     from cryptography.utils import CryptographyDeprecationWarning
+
     warnings.filterwarnings("ignore", category=CryptographyDeprecationWarning)
 except ImportError:
     pass
 
-import paramiko
-import getpass
-import sys
-from pathlib import Path
-import subprocess
-import argparse
+import argparse  # noqa: E402
+import getpass  # noqa: E402
+import subprocess  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import paramiko  # noqa: E402
+
 
 def connect_ssh(hostname, username, password, port=22):
     """Connect to SSH server using provided credentials."""
@@ -28,74 +31,78 @@ def connect_ssh(hostname, username, password, port=22):
         port_info = f":{port}" if port != 22 else ""
         print(f"Connecting to {hostname}{port_info} as {username}...")
         client.connect(hostname=hostname, username=username, password=password, port=port)
-        
+
         print("Connection successful!")
-        
+
         # Execute a simple command to verify connection
         stdin, stdout, stderr = client.exec_command("hostname")
         result = stdout.read().decode().strip()
         print(f"Server hostname: {result}")
-        
+
         return client
     except Exception as e:
         print(f"Error connecting to SSH: {str(e)}")
         return None
+
 
 def ensure_ssh_key_exists():
     """Generate SSH key if it doesn't exist."""
     ssh_dir = Path.home() / ".ssh"
     id_rsa_path = ssh_dir / "id_rsa"
     id_rsa_pub_path = ssh_dir / "id_rsa.pub"
-    
+
     # Create .ssh directory if it doesn't exist
     os.makedirs(ssh_dir, exist_ok=True)
-    
+
     # Check if SSH key already exists
     if id_rsa_path.exists() and id_rsa_pub_path.exists():
         print("SSH key pair already exists.")
         return id_rsa_path, id_rsa_pub_path
-    
+
     # Generate SSH key pair
     print("Generating new SSH key pair...")
     try:
-        subprocess.run(['ssh-keygen', '-t', 'rsa', '-b', '4096', '-f', str(id_rsa_path), '-N', ''], 
-                      check=True, capture_output=True)
+        subprocess.run(
+            ["ssh-keygen", "-t", "rsa", "-b", "4096", "-f", str(id_rsa_path), "-N", ""], check=True, capture_output=True
+        )
         print(f"SSH key pair generated at {id_rsa_path}")
         return id_rsa_path, id_rsa_pub_path
     except Exception as e:
         print(f"Error generating SSH key: {str(e)}")
         return None, None
 
+
 def upload_ssh_key(client, pub_key_path):
     """Upload the public key to the remote server."""
     try:
         # Read public key content
-        with open(pub_key_path, 'r') as f:
+        with open(pub_key_path, "r") as f:
             pub_key_content = f.read().strip()
-        
+
         # Create ~/.ssh directory on remote server if it doesn't exist
         stdin, stdout, stderr = client.exec_command("mkdir -p ~/.ssh")
         if stderr.read():
             print(f"Error creating .ssh directory: {stderr.read().decode()}")
             return False
-        
+
         # Add the public key to authorized_keys
         stdin, stdout, stderr = client.exec_command(f"echo '{pub_key_content}' >> ~/.ssh/authorized_keys")
         if stderr.read():
             print(f"Error adding public key: {stderr.read().decode()}")
             return False
-        
+
         # Set proper permissions
         stdin, stdout, stderr = client.exec_command("chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys")
         if stderr.read():
             print(f"Error setting permissions: {stderr.read().decode()}")
             return False
-        
+
         print("SSH public key successfully uploaded to the server.")
         return True
     except Exception as e:
         print(f"Error uploading SSH key: {str(e)}")
         return False
+
 
 def save_to_ssh_config(hostname, username, identity_file, port=22):
     """Save SSH credentials to ~/.ssh/config file."""
@@ -115,19 +122,19 @@ Host {hostname}
 {port_line}  User {username}
   IdentityFile {identity_file}
 """
-        
+
         # Check if file exists and if the host is already configured
         if ssh_config_path.exists():
-            with open(ssh_config_path, 'r') as f:
+            with open(ssh_config_path, "r") as f:
                 content = f.read()
                 if f"Host {hostname}" in content:
                     print(f"Host {hostname} already exists in SSH config. Not modifying the file.")
                     return
-        
+
         # Append to existing file or create new one
-        with open(ssh_config_path, 'a+') as f:
+        with open(ssh_config_path, "a+") as f:
             f.write(config_entry)
-            
+
         print(f"SSH config saved to {ssh_config_path}")
         print("You can now connect without a password using:")
         print(f"  ssh {hostname}")
@@ -135,20 +142,21 @@ Host {hostname}
     except Exception as e:
         print(f"Error saving SSH config: {str(e)}")
 
+
 def setup_ssh(args=None):
     """Main function to set up SSH with key-based authentication."""
     # Parse command line arguments if provided
     if args is None:
-        parser = argparse.ArgumentParser(description='Set up SSH with key-based authentication.')
-        parser.add_argument('-H', '--host', help='SSH server hostname or IP address')
-        parser.add_argument('-u', '--user', help='SSH username')
-        parser.add_argument('-p', '--password', help='SSH password (not recommended, use interactive mode instead)')
-        parser.add_argument('-P', '--port', type=int, default=22, help='SSH port (default: 22)')
-        parser.add_argument('-i', '--identity', help='Path to existing identity file to use')
+        parser = argparse.ArgumentParser(description="Set up SSH with key-based authentication.")
+        parser.add_argument("-H", "--host", help="SSH server hostname or IP address")
+        parser.add_argument("-u", "--user", help="SSH username")
+        parser.add_argument("-p", "--password", help="SSH password (not recommended, use interactive mode instead)")
+        parser.add_argument("-P", "--port", type=int, default=22, help="SSH port (default: 22)")
+        parser.add_argument("-i", "--identity", help="Path to existing identity file to use")
         args = parser.parse_args()
 
     # Get port from args (default to 22)
-    port = getattr(args, 'port', 22) or 22
+    port = getattr(args, "port", 22) or 22
 
     # Get credentials from arguments or prompt the user
     if args.host and args.user and args.password:
@@ -164,13 +172,13 @@ def setup_ssh(args=None):
         hostname = args.host or input("Hostname/IP: ").strip()
         username = args.user or input("Username (default: root): ").strip() or "root"
         password = args.password or getpass.getpass("Password: ")
-        
+
         if not password:
             print("Password is required. Exiting.")
             return
-    
+
     # Ensure SSH key pair exists or use provided identity
-    if hasattr(args, 'identity') and args.identity:
+    if hasattr(args, "identity") and args.identity:
         private_key_path = Path(args.identity)
         public_key_path = Path(f"{args.identity}.pub")
         if not private_key_path.exists() or not public_key_path.exists():
@@ -182,7 +190,7 @@ def setup_ssh(args=None):
         if not private_key_path or not public_key_path:
             print("Failed to ensure SSH key exists. Exiting.")
             return
-    
+
     # Connect to SSH server
     client = connect_ssh(hostname, username, password, port)
     if not client:
@@ -199,9 +207,11 @@ def setup_ssh(args=None):
         client.close()
         print("Failed to set up passwordless authentication.")
 
+
 def show_usage():
     """Show usage examples."""
-    print("""
+    print(
+        """
 SSH Key Setup Script
 ===================
 
@@ -222,4 +232,5 @@ Usage examples:
 
   5. Use custom port with existing identity file:
      evo setupssh -H 42.96.16.233 -u root -p YourPassword -P 2222 -i /path/to/private_key
-""")
+"""
+    )

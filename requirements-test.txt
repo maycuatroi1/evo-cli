@@ -6,5 +6,6 @@ black
 isort
 pytest-cov
 mypy
+types-paramiko
 gitchangelog
 mkdocs
