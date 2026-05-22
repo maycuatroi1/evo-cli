@@ -141,6 +141,69 @@ def find_tunnel(name):
     return None
 
 
+def read_local_config():
+    config_file = ETC_DIR / "config.yml"
+    if not config_file.exists():
+        return None
+    try:
+        text = config_file.read_text()
+    except OSError:
+        return None
+    tunnel_id = None
+    ssh_hostnames = []
+    current_host = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("tunnel:"):
+            tunnel_id = line.split(":", 1)[1].strip()
+        elif line.startswith("- hostname:") or line.startswith("hostname:"):
+            current_host = line.split(":", 1)[1].strip()
+        elif line.startswith("service:"):
+            if current_host and line.split(":", 1)[1].strip().startswith("ssh://"):
+                ssh_hostnames.append(current_host)
+            current_host = None
+    if not tunnel_id:
+        return None
+    return {"config_file": config_file, "tunnel_id": tunnel_id, "ssh_hostnames": ssh_hostnames}
+
+
+def cloudflared_service_state():
+    if not SERVICE_UNIT.exists():
+        return None
+    try:
+        result = subprocess.run(["systemctl", "is-active", "cloudflared"], capture_output=True, text=True)
+    except OSError:
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def detect_local_tunnel():
+    config = read_local_config()
+    if not config:
+        return None
+    name = None
+    if _has("cloudflared"):
+        for tunnel in list_tunnels():
+            if tunnel.get("id") == config["tunnel_id"]:
+                name = tunnel.get("name")
+                break
+    config["name"] = name
+    config["service"] = cloudflared_service_state()
+    return config
+
+
+def show_local_tunnel(existing):
+    table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
+    table.add_row("config", str(existing["config_file"]))
+    name = existing["name"] or "[dim]not found in account[/dim]"
+    table.add_row("tunnel", f"[accent]{name}[/accent] ({existing['tunnel_id']})")
+    table.add_row("ssh hostname", ", ".join(existing["ssh_hostnames"]) or "[dim]none[/dim]")
+    table.add_row("service", existing["service"] or "not installed")
+    console.print(
+        Panel(table, title="SSH tunnel already configured on this machine", border_style="warning", expand=False)
+    )
+
+
 def ensure_tunnel(name):
     tunnel_id = find_tunnel(name)
     if tunnel_id:
@@ -306,6 +369,27 @@ def run_setup_cloudflare_ssh(hostname, name, ssh_port, no_service):
     if platform.system() != "Linux":
         error("evo cfssh supports Linux (Ubuntu) only.")
         return
+
+    existing = detect_local_tunnel()
+    if existing:
+        show_local_tunnel(existing)
+        existing_host = existing["ssh_hostnames"][0] if existing["ssh_hostnames"] else None
+        if existing_host:
+            if not hostname:
+                if Confirm.ask(f"[accent]Reuse this tunnel for {existing_host}?[/accent]", default=True):
+                    hostname = existing_host
+                    name = name or existing["name"] or existing_host.split(".")[0]
+                else:
+                    info("Setting up a new tunnel; it will replace the config shown above.")
+            elif hostname == existing_host:
+                info(f"Reconfiguring the existing tunnel for {hostname}.")
+            elif not Confirm.ask(
+                f"[warning]{existing_host} is already served from this machine. "
+                f"Replace it with {hostname}?[/warning]",
+                default=False,
+            ):
+                info("Keeping the existing tunnel. Nothing changed.")
+                return
 
     hostname = hostname or Prompt.ask("[accent]Public hostname for SSH (e.g. dev.example.com)[/accent]")
     if not hostname:
