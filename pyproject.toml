@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evo_cli"
+dynamic = ["version"]
+description = "Evolution CLI - a developer toolbox for setting up dev machines"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "maycuatroi" }]
+keywords = ["cli", "ssh", "miniconda", "cloudflare", "devtools"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: The Unlicense (Unlicense)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "paramiko>=2.7.0",
+    "rich>=13.0",
+    "rich-click>=1.8",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-cov",
+    "coverage",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/maycuatroi/evo-cli"
+Repository = "https://github.com/maycuatroi/evo-cli"
+
+[project.scripts]
+evo = "evo_cli.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { file = "evo_cli/VERSION" }
+
+[tool.setuptools.packages.find]
+include = ["evo_cli*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+evo_cli = ["VERSION"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["evo_cli"]
