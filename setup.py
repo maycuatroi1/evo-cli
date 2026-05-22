@@ -40,7 +40,7 @@ setup(
     packages=find_packages(exclude=["tests", ".github"]),
     install_requires=read_requirements("requirements.txt"),
     entry_points={
-        "console_scripts": ["evo_cli = evo_cli.__main__:main"]
+        "console_scripts": ["evo = evo_cli.__main__:main"]
     },
     extras_require={"test": read_requirements("requirements-test.txt")},
 )
