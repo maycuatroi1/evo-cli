@@ -25,21 +25,18 @@ install:          ## Install the project in dev mode.
 	$(ENV_PREFIX)pip install -e .[test]
 
 .PHONY: fmt
-fmt:              ## Format code using black & isort.
-	$(ENV_PREFIX)isort evo_cli/
-	$(ENV_PREFIX)black -l 120 evo_cli/
-	$(ENV_PREFIX)black -l 120 tests/
+fmt:              ## Format code and fix imports using ruff.
+	$(ENV_PREFIX)ruff format evo_cli/ tests/
+	$(ENV_PREFIX)ruff check --fix evo_cli/ tests/
 
 .PHONY: lint
-lint:             ## Run pep8, black, mypy linters.
-	$(ENV_PREFIX)flake8 evo_cli/
-	$(ENV_PREFIX)black -l 120 --check evo_cli/
-	$(ENV_PREFIX)black -l 120 --check tests/
-	$(ENV_PREFIX)mypy --ignore-missing-imports evo_cli/
+lint:             ## Run ruff linter and format check.
+	$(ENV_PREFIX)ruff check evo_cli/ tests/
+	$(ENV_PREFIX)ruff format --check evo_cli/ tests/
 
 .PHONY: test
 test: lint        ## Run tests and generate coverage report.
-	$(ENV_PREFIX)pytest -v --cov-config .coveragerc --cov=evo_cli -l --tb=short --maxfail=1 tests/
+	$(ENV_PREFIX)pytest -v --cov=evo_cli -l --tb=short --maxfail=1 tests/
 	$(ENV_PREFIX)coverage xml
 	$(ENV_PREFIX)coverage html
 

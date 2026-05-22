@@ -1,4 +1,4 @@
-from evo_cli.cloudflare_ssh import build_config_yaml
+from evo_cli.commands.cloudflare import build_config_yaml
 
 
 def test_build_config_yaml_contains_ingress():

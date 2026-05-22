@@ -13,6 +13,10 @@ pip install evo_cli
 
 ### Available Commands
 
+`evo` is built with [click](https://click.palletsprojects.com/) and
+[rich](https://rich.readthedocs.io/). Run `evo --help` or `evo <command> -h`
+for colorized help, option tables, and examples.
+
 #### SSH Setup
 
 Set up SSH with key-based authentication:
@@ -24,9 +28,9 @@ evo setupssh
 Options:
 - `-H, --host` - SSH server hostname or IP address
 - `-u, --user` - SSH username
-- `-p, --password` - SSH password (not recommended, use interactive mode instead)
-- `-i, --identity` - Path to existing identity file to use
-- `--help-examples` - Show usage examples
+- `-p, --password` - SSH password (prefer the interactive prompt)
+- `-P, --port` - SSH port (default: 22)
+- `-i, --identity` - Existing private key to install instead of generating one
 
 #### Miniconda Installation
 
@@ -39,7 +43,6 @@ evo miniconda
 Options:
 - `-p, --prefix` - Installation directory (default: ~/miniconda3 or %USERPROFILE%\miniconda3)
 - `-f, --force` - Force reinstallation even if Miniconda is already installed
-- `--help-examples` - Show usage examples
 
 #### Cloudflare SSH Tunnel
 
@@ -56,7 +59,6 @@ Options:
 - `-n, --name` - Tunnel name (default: first label of the hostname)
 - `-P, --ssh-port` - Local SSH port to forward (default: 22)
 - `--no-service` - Configure only, do not install the systemd service
-- `--help-examples` - Show usage examples
 
 To connect from a client machine, install `cloudflared` and add to `~/.ssh/config`:
 
