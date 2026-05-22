@@ -11,6 +11,8 @@ Be creative! do whatever you want!
 import argparse
 import sys
 
+from evo_cli.cloudflare_ssh import setup_cloudflare_ssh
+from evo_cli.cloudflare_ssh import show_usage as show_cfssh_usage
 from evo_cli.miniconda_setup import install_miniconda
 from evo_cli.miniconda_setup import show_usage as show_miniconda_usage
 from evo_cli.ssh_setup import setup_ssh
@@ -73,9 +75,26 @@ def main():  # pragma: no cover
             return
 
         install_miniconda(miniconda_args)
+    elif args.command == "cfssh":
+        # Parse arguments for the Cloudflare SSH tunnel setup
+        cfssh_parser = argparse.ArgumentParser(description="Set up a Cloudflare SSH tunnel for this machine")
+        cfssh_parser.add_argument("-H", "--hostname", help="Public hostname for SSH access")
+        cfssh_parser.add_argument("-n", "--name", help="Tunnel name (default: first label of hostname)")
+        cfssh_parser.add_argument("-P", "--ssh-port", type=int, default=22, help="Local SSH port (default: 22)")
+        cfssh_parser.add_argument("--no-service", action="store_true", help="Skip systemd service install")
+        cfssh_parser.add_argument("--help-examples", action="store_true", help="Show usage examples")
+
+        cfssh_args = cfssh_parser.parse_args(sys.argv[2:])
+
+        if cfssh_args.help_examples:
+            show_cfssh_usage()
+            return
+
+        setup_cloudflare_ssh(cfssh_args)
     else:
         print(f"Unknown command: {args.command}")
         print("Available commands:")
         print("  setupssh  - Set up SSH key-based authentication")
         print("  miniconda - Install Miniconda (cross-platform)")
+        print("  cfssh     - Set up a Cloudflare SSH tunnel for this machine")
         parser.print_help()

@@ -40,3 +40,28 @@ Options:
 - `-p, --prefix` - Installation directory (default: ~/miniconda3 or %USERPROFILE%\miniconda3)
 - `-f, --force` - Force reinstallation even if Miniconda is already installed
 - `--help-examples` - Show usage examples
+
+#### Cloudflare SSH Tunnel
+
+Expose this Ubuntu machine's SSH server through a Cloudflare named tunnel, so you can reach it from anywhere without opening a public inbound port:
+
+```bash
+evo cfssh -H dev.example.com
+```
+
+It installs `cloudflared`, logs in to Cloudflare, creates a named tunnel, writes `/etc/cloudflared/config.yml` with an `ssh://` ingress rule, routes a proxied DNS record, and installs the `cloudflared` systemd service. Requires a Cloudflare account with a domain managed in Cloudflare.
+
+Options:
+- `-H, --hostname` - Public hostname for SSH, e.g. `dev.example.com`
+- `-n, --name` - Tunnel name (default: first label of the hostname)
+- `-P, --ssh-port` - Local SSH port to forward (default: 22)
+- `--no-service` - Configure only, do not install the systemd service
+- `--help-examples` - Show usage examples
+
+To connect from a client machine, install `cloudflared` and add to `~/.ssh/config`:
+
+```
+Host dev.example.com
+  User <your-user>
+  ProxyCommand cloudflared access ssh --hostname %h
+```
