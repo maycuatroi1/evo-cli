@@ -8,7 +8,7 @@ Awesome evo_cli created by maycuatroi
 ## Install it from PyPI
 
 ```bash
-pip install evo_cli
+pip install evo-cli
 ```
 
 ### Available Commands
@@ -67,3 +67,21 @@ Host dev.example.com
   User <your-user>
   ProxyCommand cloudflared access ssh --hostname %h
 ```
+
+#### Fix Claude Code
+
+Detect and fix the Claude Code 2.1.154-2.1.158 tool-result delivery bug (commands run but their output is returned to the model empty, duplicated, or out of order):
+
+```bash
+evo f-claude
+```
+
+It checks the installed version against the affected range, disables the auto-updater in `~/.claude/settings.json` (backing it up first), downgrades to a known-good build, respawns background sessions, and verifies the result.
+
+Options:
+- `-c, --check` - Diagnose only; make no changes
+- `--pin-version` - Known-good version to install when downgrading (default: 2.1.153)
+- `--no-downgrade` - Only disable the auto-updater; skip the reinstall
+- `-y, --yes` - Skip the confirmation prompt
+- `-f, --force` - Apply the fix even if the version is not in the affected range
+- `--unpin` - Undo the fix: re-enable the auto-updater and install the latest build
