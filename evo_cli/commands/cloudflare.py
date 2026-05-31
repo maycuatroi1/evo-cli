@@ -384,8 +384,7 @@ def run_setup_cloudflare_ssh(hostname, name, ssh_port, no_service):
             elif hostname == existing_host:
                 info(f"Reconfiguring the existing tunnel for {hostname}.")
             elif not Confirm.ask(
-                f"[warning]{existing_host} is already served from this machine. "
-                f"Replace it with {hostname}?[/warning]",
+                f"[warning]{existing_host} is already served from this machine. Replace it with {hostname}?[/warning]",
                 default=False,
             ):
                 info("Keeping the existing tunnel. Nothing changed.")
