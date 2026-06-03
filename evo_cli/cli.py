@@ -5,6 +5,7 @@ from evo_cli.commands.cloudflare import cfssh
 from evo_cli.commands.fix_claude import f_claude
 from evo_cli.commands.gdrive import gdrive
 from evo_cli.commands.miniconda import miniconda
+from evo_cli.commands.site2s import site2s
 from evo_cli.commands.ssh import setupssh
 
 click.rich_click.USE_MARKDOWN = True
@@ -33,6 +34,7 @@ cli.add_command(miniconda)
 cli.add_command(cfssh)
 cli.add_command(f_claude)
 cli.add_command(gdrive)
+cli.add_command(site2s)
 
 
 def main():
