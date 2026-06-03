@@ -3,6 +3,7 @@ import rich_click as click
 from evo_cli import __version__
 from evo_cli.commands.cloudflare import cfssh
 from evo_cli.commands.fix_claude import f_claude
+from evo_cli.commands.gdrive import gdrive
 from evo_cli.commands.miniconda import miniconda
 from evo_cli.commands.ssh import setupssh
 
@@ -31,6 +32,7 @@ cli.add_command(setupssh)
 cli.add_command(miniconda)
 cli.add_command(cfssh)
 cli.add_command(f_claude)
+cli.add_command(gdrive)
 
 
 def main():
