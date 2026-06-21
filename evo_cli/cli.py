@@ -7,6 +7,7 @@ from evo_cli.commands.gdrive import gdrive
 from evo_cli.commands.localproxy import localproxy
 from evo_cli.commands.miniconda import miniconda
 from evo_cli.commands.netcheck import netcheck
+from evo_cli.commands.plantuml import plantuml
 from evo_cli.commands.site2s import site2s
 from evo_cli.commands.ssh import setupssh
 
@@ -39,6 +40,7 @@ cli.add_command(gdrive)
 cli.add_command(site2s)
 cli.add_command(localproxy)
 cli.add_command(netcheck)
+cli.add_command(plantuml)
 
 
 def main():
