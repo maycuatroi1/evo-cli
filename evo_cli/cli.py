@@ -11,6 +11,7 @@ from evo_cli.commands.plantuml import plantuml
 from evo_cli.commands.site2s import site2s
 from evo_cli.commands.ssh import setupssh
 from evo_cli.commands.sysmon import sysmon
+from evo_cli.commands.wifi import wifi
 
 click.rich_click.USE_MARKDOWN = True
 click.rich_click.SHOW_ARGUMENTS = True
@@ -43,6 +44,7 @@ cli.add_command(localproxy)
 cli.add_command(netcheck)
 cli.add_command(plantuml)
 cli.add_command(sysmon)
+cli.add_command(wifi)
 
 
 def main():
