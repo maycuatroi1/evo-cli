@@ -27,7 +27,7 @@ DEFAULT_MCP_SERVERS = {
     },
     "playwright": {
         "type": "local",
-        "command": ["npx", "-y", "@playwright/mcp@latest", "--headless"],
+        "command": ["npx", "-y", "@playwright/mcp@latest"],
         "enabled": True,
     },
 }
@@ -259,7 +259,7 @@ def verify_mcp_servers():
         '"clientInfo":{"name":"evo-cli","version":"1.0"}}}'
     )
     checks = [
-        ("playwright", ["npx", "-y", "@playwright/mcp@latest", "--headless"]),
+        ("playwright", ["npx", "-y", "@playwright/mcp@latest"]),
         ("google-search", ["npx", "-y", "@mcp-server/google-search-mcp@latest"]),
     ]
     for name, cmd in checks:
