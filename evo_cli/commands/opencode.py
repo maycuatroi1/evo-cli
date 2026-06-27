@@ -112,15 +112,29 @@ def ensure_node_installed():
 
 
 def install_mcp_servers():
-    """Install MCP server npm packages globally via npx."""
+    """Pre-fetch MCP server npm packages into the npx cache.
+
+    MCP servers speak JSON-RPC over stdio, so most do not implement a real
+    ``--version`` flag - they simply start up and block reading stdin. Run with
+    stdin detached (DEVNULL) so a server that ignores ``--version`` sees EOF and
+    exits right away instead of hanging on the terminal, and cap each call with a
+    timeout as a safety net. ``check=False`` keeps a non-zero exit from aborting
+    the whole setup; the verify step confirms the servers actually work.
+    """
     step("Installing MCP servers")
     servers = [
         "@mcp-server/google-search-mcp@latest",
         "@playwright/mcp@latest",
     ]
     for server in servers:
-        info(f"Installing {server}")
-        run_command(["npx", "-y", server, "--version"], status=f"Fetching {server}")
+        info(f"Fetching {server}")
+        run_command(
+            ["npx", "-y", server, "--version"],
+            status=f"Fetching {server}",
+            stdin=subprocess.DEVNULL,
+            timeout=180,
+            check=False,
+        )
     success("MCP server packages ready")
 
 
@@ -131,6 +145,8 @@ def install_playwright_browsers():
         run_command(
             ["npx", "playwright", "install", "chromium"],
             status="Downloading Chromium for Playwright",
+            stdin=subprocess.DEVNULL,
+            timeout=600,
         )
         success("Playwright Chromium installed")
     except Exception as exc:

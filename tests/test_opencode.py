@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 from click.testing import CliRunner
@@ -8,6 +9,7 @@ from evo_cli.commands.opencode import (
     DEFAULT_MCP_SERVERS,
     configure_opencode_global,
     configure_opencode_project,
+    install_mcp_servers,
     load_jsonc,
     merge_mcp_config,
     save_jsonc,
@@ -71,6 +73,24 @@ def test_configure_opencode_project(tmp_path):
     data = load_jsonc(path)
     assert "mcp" in data
     assert set(data["mcp"].keys()) == {"google-search", "playwright"}
+
+
+def test_install_mcp_servers_detaches_stdin_and_sets_timeout(monkeypatch):
+    """Regression: MCP servers read stdin, so the fetch must not block on a TTY."""
+    calls = []
+
+    def fake_run_command(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+
+    monkeypatch.setattr("evo_cli.commands.opencode.run_command", fake_run_command)
+    install_mcp_servers()
+
+    assert calls, "expected at least one MCP server fetch"
+    for cmd, kwargs in calls:
+        assert kwargs.get("stdin") is subprocess.DEVNULL
+        assert kwargs.get("timeout")
+        # A server that ignores --version must not abort the whole setup.
+        assert kwargs.get("check") is False
 
 
 def test_setup_opencode_writes_global_and_project(runner, tmp_path, monkeypatch):

@@ -52,17 +52,31 @@ def step(title):
     console.rule(f"[step]{title}[/step]", style="step", align="left")
 
 
-def run_command(cmd, capture=False, check=True, input_text=None, status=None):
+def run_command(cmd, capture=False, check=True, input_text=None, status=None, timeout=None, stdin=None):
     cmd = [str(part) for part in cmd]
     console.print(f"[cmd]$ {' '.join(cmd)}[/cmd]")
-    if status:
-        with console.status(f"[info]{status}[/info]", spinner="dots"):
-            result = subprocess.run(cmd, capture_output=True, text=True, input=input_text)
-        output = (result.stdout or "").strip()
-        if output:
-            console.print(output)
-    else:
-        result = subprocess.run(cmd, capture_output=capture, text=True, input=input_text)
+
+    run_kwargs = {"text": True, "input": input_text, "timeout": timeout}
+    # subprocess.run rejects passing both `input` and `stdin`. Only attach an
+    # explicit stdin (e.g. DEVNULL) when we are not feeding input, so callers can
+    # detach a child from the terminal and avoid it blocking on an inherited TTY.
+    if input_text is None and stdin is not None:
+        run_kwargs["stdin"] = stdin
+
+    try:
+        if status:
+            with console.status(f"[info]{status}[/info]", spinner="dots"):
+                result = subprocess.run(cmd, capture_output=True, **run_kwargs)
+            output = (result.stdout or "").strip()
+            if output:
+                console.print(output)
+        else:
+            result = subprocess.run(cmd, capture_output=capture, **run_kwargs)
+    except subprocess.TimeoutExpired as exc:
+        console.print(f"[error]command timed out after {timeout}s: {' '.join(cmd)}[/error]")
+        if check:
+            raise CommandError(f"command timed out after {timeout}s: {' '.join(cmd)}") from exc
+        return exc
 
     if result.returncode != 0:
         message = (result.stderr or "").strip()
