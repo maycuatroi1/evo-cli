@@ -5,6 +5,7 @@ from evo_cli.commands.cloudflare import cfssh
 from evo_cli.commands.fix_claude import f_claude
 from evo_cli.commands.gdrive import gdrive
 from evo_cli.commands.localproxy import localproxy
+from evo_cli.commands.mcp import mcp_group
 from evo_cli.commands.miniconda import miniconda
 from evo_cli.commands.netcheck import netcheck
 from evo_cli.commands.opencode import setup_opencode
@@ -50,6 +51,7 @@ cli.add_command(f_claude)
 cli.add_command(gdrive)
 cli.add_command(site2s)
 cli.add_command(localproxy)
+cli.add_command(mcp_group)
 cli.add_command(netcheck)
 cli.add_command(plantuml)
 cli.add_command(sysmon)
