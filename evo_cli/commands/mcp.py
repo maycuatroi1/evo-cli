@@ -1,5 +1,6 @@
 """Set up MCP servers for Claude Code and OpenCode in one shot."""
 
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,45 +16,17 @@ from evo_cli.commands.opencode import (
     save_jsonc,
 )
 from evo_cli.console import console, error, info, run_command, step, success, warning
+from evo_cli.mcp_registry import MCP_REGISTRY, is_remote, to_opencode_config
 
 EPILOG = Text.from_markup(
     "[bold]Examples[/bold]\n\n"
     "  [cyan]evo mcp list[/cyan]\n"
-    "  [cyan]evo mcp add notion[/cyan]\n"
+    "  [cyan]evo mcp add playwright[/cyan]\n"
     "  [cyan]evo mcp add notion --claude-only[/cyan]\n"
     "  [cyan]evo mcp add notion --opencode-only --project .[/cyan]\n"
-    "  [cyan]evo mcp add my-server --url https://example.com/mcp --transport http[/cyan]"
+    "  [cyan]evo mcp add my-remote --url https://example.com/mcp --transport http[/cyan]\n"
+    '  [cyan]evo mcp add my-local --command "npx -y some-mcp" --env API_KEY=xxx[/cyan]'
 )
-
-MCP_REGISTRY = {
-    "notion": {
-        "transport": "http",
-        "url": "https://mcp.notion.com/mcp",
-        "description": "Notion workspace - pages, databases, search. OAuth on first use.",
-    },
-    "context7": {
-        "transport": "http",
-        "url": "https://mcp.context7.com/mcp",
-        "description": "Context7 - up-to-date library docs and code examples.",
-    },
-    "deepwiki": {
-        "transport": "sse",
-        "url": "https://mcp.deepwiki.com/sse",
-        "description": "DeepWiki - ask questions about any public GitHub repo.",
-    },
-}
-
-
-def to_opencode_config(spec):
-    if spec["transport"] in ("http", "sse"):
-        config = {"type": "remote", "url": spec["url"], "enabled": True}
-        if spec.get("headers"):
-            config["headers"] = dict(spec["headers"])
-        return config
-    config = {"type": "local", "command": list(spec["command"]), "enabled": True}
-    if spec.get("env"):
-        config["environment"] = dict(spec["env"])
-    return config
 
 
 def claude_has_server(name):
@@ -77,7 +50,7 @@ def add_to_claude(name, spec, scope):
         return True
 
     cmd = ["claude", "mcp", "add", "--scope", scope]
-    if spec["transport"] in ("http", "sse"):
+    if is_remote(spec):
         cmd += ["--transport", spec["transport"], name, spec["url"]]
     else:
         for key, value in (spec.get("env") or {}).items():
@@ -128,15 +101,26 @@ def add_to_opencode(name, spec, project):
     return True
 
 
-def resolve_spec(name, url, transport):
+def resolve_spec(name, url, transport, command=None, env=None):
+    if url and command:
+        raise click.BadParameter("Use either --url (remote) or --command (local), not both.")
     if url:
         if transport not in ("http", "sse"):
             raise click.BadParameter("--transport must be http or sse when using --url")
-        return {"transport": transport, "url": url, "description": "custom"}
+        return {"transport": transport, "url": url, "description": "custom remote server"}
+    if command:
+        argv = shlex.split(command) if isinstance(command, str) else list(command)
+        if not argv:
+            raise click.BadParameter("--command must contain a command to run.")
+        spec = {"transport": "stdio", "command": argv, "description": "custom local server"}
+        if env:
+            spec["env"] = dict(env)
+        return spec
     if name in MCP_REGISTRY:
         return MCP_REGISTRY[name]
     raise click.BadParameter(
-        f"Unknown MCP server '{name}'. Run `evo mcp list` to see known servers, or pass --url to add a custom one."
+        f"Unknown MCP server '{name}'. Run `evo mcp list` to see the catalog, "
+        "or pass --url (remote) / --command (local) to add a custom one."
     )
 
 
@@ -147,25 +131,38 @@ def mcp_group():
 
 @mcp_group.command("list")
 def list_servers():
-    """List the MCP servers bundled in the registry."""
-    table = Table(title="Known MCP servers", title_style="step", expand=False)
+    """List the MCP servers in the curated library."""
+    table = Table(title="MCP server library", title_style="step", expand=False)
     table.add_column("Name", style="accent")
-    table.add_column("Transport", style="info")
-    table.add_column("Endpoint", style="dim")
+    table.add_column("Category", style="info")
+    table.add_column("Type", style="info")
+    table.add_column("Endpoint / command", style="dim", overflow="fold")
     table.add_column("Description")
     for name, spec in MCP_REGISTRY.items():
         endpoint = spec.get("url") or " ".join(spec.get("command", []))
-        table.add_row(name, spec["transport"], endpoint, spec["description"])
+        kind = "remote" if is_remote(spec) else "local"
+        table.add_row(name, spec.get("category", "-"), kind, endpoint, spec["description"])
     console.print(table)
     console.print(
-        "\nAdd one with [accent]evo mcp add <name>[/accent], "
-        "or a custom server with [accent]evo mcp add <name> --url <url>[/accent]."
+        "\nAdd one with [accent]evo mcp add <name>[/accent], a custom remote with "
+        '[accent]--url <url>[/accent], or a custom local with [accent]--command "<cmd>"[/accent].'
     )
 
 
 @mcp_group.command("add", epilog=EPILOG)
 @click.argument("name")
-@click.option("--url", help="Custom remote MCP endpoint (for servers not in the registry).")
+@click.option("--url", help="Custom remote MCP endpoint (for servers not in the library).")
+@click.option(
+    "--command",
+    help='Custom local (stdio) MCP server command, e.g. "npx -y some-mcp".',
+)
+@click.option(
+    "--env",
+    "env",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Environment variable for a custom --command server (repeatable).",
+)
 @click.option(
     "--transport",
     type=click.Choice(["http", "sse"]),
@@ -187,12 +184,13 @@ def list_servers():
     type=click.Path(file_okay=False, dir_okay=True),
     help="Also write into a project-level opencode.json at this directory.",
 )
-def add_server(name, url, transport, scope, claude_only, opencode_only, project):
+def add_server(name, url, command, env, transport, scope, claude_only, opencode_only, project):
     """Add an MCP server to Claude Code and OpenCode.
 
-    NAME is a key from the registry (`evo mcp list`) or any label when paired
-    with --url for a custom remote server. By default the server is registered
-    in both tools; use --claude-only or --opencode-only to limit the scope.
+    NAME is a key from the library (`evo mcp list`), or any label when paired
+    with --url (custom remote server) or --command (custom local server). By
+    default the server is registered in both tools; use --claude-only or
+    --opencode-only to limit the scope.
 
     Remote servers that use OAuth (like notion) prompt for sign-in on first use:
     run /mcp inside Claude Code, and OpenCode triggers the flow on next launch.
@@ -201,8 +199,16 @@ def add_server(name, url, transport, scope, claude_only, opencode_only, project)
         error("--claude-only and --opencode-only are mutually exclusive")
         return
 
+    env_map = {}
+    for item in env:
+        if "=" not in item:
+            error(f"Invalid --env '{item}'; expected KEY=VALUE")
+            return
+        key, value = item.split("=", 1)
+        env_map[key] = value
+
     try:
-        spec = resolve_spec(name, url, transport)
+        spec = resolve_spec(name, url, transport, command, env_map or None)
     except click.BadParameter as exc:
         error(str(exc))
         return

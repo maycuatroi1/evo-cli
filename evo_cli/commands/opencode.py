@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from evo_cli.console import console, error, info, run_command, step, success, warning
+from evo_cli.mcp_registry import opencode_servers
 
 EPILOG = Text.from_markup(
     "[bold]Examples[/bold]\n\n"
@@ -19,18 +20,14 @@ EPILOG = Text.from_markup(
     "  [cyan]evo setup opencode --project .[/cyan]"
 )
 
-DEFAULT_MCP_SERVERS = {
-    "google-search": {
-        "type": "local",
-        "command": ["npx", "-y", "@mcp-server/google-search-mcp@latest"],
-        "enabled": True,
-    },
-    "playwright": {
-        "type": "local",
-        "command": ["npx", "-y", "@playwright/mcp@latest"],
-        "enabled": True,
-    },
-}
+# Servers bootstrapped by `evo setup opencode`, pulled from the shared library
+# (evo_cli/mcp_registry.py). Add more servers anytime with `evo mcp add <name>`.
+DEFAULT_MCP_SERVERS = opencode_servers("google-search", "playwright")
+
+
+def _local_mcp_commands():
+    """Commands for the local (stdio) servers in DEFAULT_MCP_SERVERS."""
+    return [(name, list(cfg["command"])) for name, cfg in DEFAULT_MCP_SERVERS.items() if cfg.get("type") == "local"]
 
 
 def is_windows():
@@ -122,15 +119,11 @@ def install_mcp_servers():
     the whole setup; the verify step confirms the servers actually work.
     """
     step("Installing MCP servers")
-    servers = [
-        "@mcp-server/google-search-mcp@latest",
-        "@playwright/mcp@latest",
-    ]
-    for server in servers:
-        info(f"Fetching {server}")
+    for name, command in _local_mcp_commands():
+        info(f"Fetching {name}")
         run_command(
-            ["npx", "-y", server, "--version"],
-            status=f"Fetching {server}",
+            [*command, "--version"],
+            status=f"Fetching {name}",
             stdin=subprocess.DEVNULL,
             timeout=180,
             check=False,
@@ -152,6 +145,45 @@ def install_playwright_browsers():
     except Exception as exc:
         warning(f"Playwright browser install failed: {exc}")
         info("You can retry later with: npx playwright install chromium")
+
+
+def opencode_version():
+    """Return the installed OpenCode version string, or None if not on PATH."""
+    if not shutil.which("opencode"):
+        return None
+    try:
+        result = subprocess.run(["opencode", "--version"], capture_output=True, text=True, timeout=30)
+        return result.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def install_opencode(npm_cmd="npm"):
+    """Install the OpenCode CLI globally via npm if it is not already present."""
+    step("Installing OpenCode")
+    version = opencode_version()
+    if version is not None:
+        info(f"OpenCode already installed ({version}); skipping")
+        return True
+
+    try:
+        run_command(
+            [npm_cmd, "install", "-g", "opencode-ai@latest"],
+            status="Installing OpenCode via npm",
+            timeout=300,
+        )
+    except Exception as exc:
+        warning(f"Could not install OpenCode automatically: {exc}")
+        info("Install manually: npm i -g opencode-ai@latest (or curl -fsSL https://opencode.ai/install | bash)")
+        return False
+
+    version = opencode_version()
+    if version is None:
+        warning("OpenCode installed but `opencode` is not on PATH yet")
+        info("Open a new shell, or add your npm global bin directory to PATH")
+        return False
+    success(f"OpenCode installed ({version})")
+    return True
 
 
 def load_jsonc(path):
@@ -258,11 +290,7 @@ def verify_mcp_servers():
         '"params":{"protocolVersion":"2024-11-05","capabilities":{},'
         '"clientInfo":{"name":"evo-cli","version":"1.0"}}}'
     )
-    checks = [
-        ("playwright", ["npx", "-y", "@playwright/mcp@latest"]),
-        ("google-search", ["npx", "-y", "@mcp-server/google-search-mcp@latest"]),
-    ]
-    for name, cmd in checks:
+    for name, cmd in _local_mcp_commands():
         try:
             result = subprocess.run(
                 cmd,
@@ -279,15 +307,17 @@ def verify_mcp_servers():
             warning(f"Could not verify MCP server [accent]{name}[/accent]: {exc}")
 
 
-def run_setup_opencode(global_only, project):
+def run_setup_opencode(global_only, project, skip_install=False):
     step("evo setup opencode")
 
     try:
-        ensure_node_installed()
+        _, npm_cmd, _ = ensure_node_installed()
     except Exception as exc:
         error(str(exc))
         return
 
+    if not skip_install:
+        install_opencode(npm_cmd)
     install_mcp_servers()
     install_playwright_browsers()
 
@@ -304,10 +334,15 @@ def run_setup_opencode(global_only, project):
     if project_path:
         paths_text += f"\nProject: [accent]{project_path}[/accent]"
 
+    opencode_note = (
+        "Run `opencode` to start."
+        if opencode_version() is not None
+        else "Install OpenCode with: npm i -g opencode-ai@latest"
+    )
     console.print(
         Panel(
             f"OpenCode configured with google-search and playwright MCP servers.\n\n{paths_text}\n\n"
-            "Restart OpenCode to load the new MCP tools.",
+            f"{opencode_note} Restart OpenCode to load the new MCP tools.",
             title="setup opencode complete",
             border_style="success",
             expand=False,
@@ -322,18 +357,24 @@ def run_setup_opencode(global_only, project):
     help="Only update the global OpenCode config; skip project-level config.",
 )
 @click.option(
+    "--skip-install",
+    is_flag=True,
+    help="Skip installing the OpenCode CLI; only set up MCP servers and config.",
+)
+@click.option(
     "--project",
     type=click.Path(file_okay=False, dir_okay=True, writable=True),
     help="Project directory to write opencode.json into. Defaults to the current directory.",
 )
-def setup_opencode(global_only, project):
-    """Install Node.js (if needed), OpenCode MCP servers, and write config files.
+def setup_opencode(global_only, skip_install, project):
+    """Install OpenCode and Node.js (if needed), its MCP servers, and write config files.
 
     This command bootstraps a fresh machine with the same OpenCode + MCP setup
-    used across devices. It installs the google-search and playwright MCP servers,
-    downloads the Playwright Chromium browser, and writes both global
+    used across devices. It installs the OpenCode CLI (via npm, unless
+    --skip-install) and the google-search and playwright MCP servers, downloads
+    the Playwright Chromium browser, and writes both global
     (~/.config/opencode/opencode.jsonc) and project-level (opencode.json) configs.
 
     No credentials are bundled; only public MCP server references are added.
     """
-    run_setup_opencode(global_only, project)
+    run_setup_opencode(global_only, project, skip_install=skip_install)

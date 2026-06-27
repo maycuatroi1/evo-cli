@@ -46,10 +46,39 @@ def test_resolve_spec_from_registry():
     assert spec["url"] == "https://mcp.notion.com/mcp"
 
 
+def test_resolve_spec_playwright_is_local():
+    spec = resolve_spec("playwright", None, "http")
+    assert spec["transport"] == "stdio"
+    assert spec["command"] == ["npx", "-y", "@playwright/mcp@latest"]
+    assert to_opencode_config(spec) == {
+        "type": "local",
+        "command": ["npx", "-y", "@playwright/mcp@latest"],
+        "enabled": True,
+    }
+
+
+def test_mcp_list_shows_playwright(runner):
+    result = runner.invoke(cli, ["mcp", "list"])
+    assert result.exit_code == 0
+    assert "playwright" in result.output
+
+
 def test_resolve_spec_custom_url():
     spec = resolve_spec("anything", "https://x.dev/mcp", "http")
     assert spec["transport"] == "http"
     assert spec["url"] == "https://x.dev/mcp"
+
+
+def test_resolve_spec_custom_command():
+    spec = resolve_spec("my-local", None, "http", command="npx -y some-mcp", env={"K": "V"})
+    assert spec["transport"] == "stdio"
+    assert spec["command"] == ["npx", "-y", "some-mcp"]
+    assert spec["env"] == {"K": "V"}
+
+
+def test_resolve_spec_url_and_command_conflict():
+    with pytest.raises(Exception):
+        resolve_spec("x", "https://x.dev/mcp", "http", command="npx -y some-mcp")
 
 
 def test_resolve_spec_unknown_raises():
@@ -73,6 +102,19 @@ def test_add_opencode_only_writes_configs(runner, tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert load_jsonc(global_path)["mcp"]["notion"]["url"] == "https://mcp.notion.com/mcp"
     assert load_jsonc(project / "opencode.json")["mcp"]["notion"]["type"] == "remote"
+
+
+def test_add_playwright_opencode_only_writes_local(runner, tmp_path, monkeypatch):
+    global_path = tmp_path / "global.jsonc"
+    monkeypatch.setattr(
+        "evo_cli.commands.mcp.get_global_config_path",
+        lambda: global_path,
+    )
+    result = runner.invoke(cli, ["mcp", "add", "playwright", "--opencode-only"])
+    assert result.exit_code == 0
+    entry = load_jsonc(global_path)["mcp"]["playwright"]
+    assert entry["type"] == "local"
+    assert entry["command"] == ["npx", "-y", "@playwright/mcp@latest"]
 
 
 def test_add_rejects_both_only_flags(runner, tmp_path, monkeypatch):
