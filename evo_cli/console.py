@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import urllib.request
 
@@ -52,9 +53,19 @@ def step(title):
     console.rule(f"[step]{title}[/step]", style="step", align="left")
 
 
+def resolve_executable(cmd):
+    cmd = [str(part) for part in cmd]
+    if cmd:
+        resolved = shutil.which(cmd[0])
+        if resolved:
+            cmd[0] = resolved
+    return cmd
+
+
 def run_command(cmd, capture=False, check=True, input_text=None, status=None, timeout=None, stdin=None):
     cmd = [str(part) for part in cmd]
     console.print(f"[cmd]$ {' '.join(cmd)}[/cmd]")
+    exec_cmd = resolve_executable(cmd)
 
     run_kwargs = {"text": True, "input": input_text, "timeout": timeout}
     # subprocess.run rejects passing both `input` and `stdin`. Only attach an
@@ -66,12 +77,12 @@ def run_command(cmd, capture=False, check=True, input_text=None, status=None, ti
     try:
         if status:
             with console.status(f"[info]{status}[/info]", spinner="dots"):
-                result = subprocess.run(cmd, capture_output=True, **run_kwargs)
+                result = subprocess.run(exec_cmd, capture_output=True, **run_kwargs)
             output = (result.stdout or "").strip()
             if output:
                 console.print(output)
         else:
-            result = subprocess.run(cmd, capture_output=capture, **run_kwargs)
+            result = subprocess.run(exec_cmd, capture_output=capture, **run_kwargs)
     except subprocess.TimeoutExpired as exc:
         console.print(f"[error]command timed out after {timeout}s: {' '.join(cmd)}[/error]")
         if check:

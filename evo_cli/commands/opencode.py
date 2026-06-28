@@ -10,7 +10,7 @@ import rich_click as click
 from rich.panel import Panel
 from rich.text import Text
 
-from evo_cli.console import console, error, info, run_command, step, success, warning
+from evo_cli.console import console, error, info, resolve_executable, run_command, step, success, warning
 from evo_cli.mcp_registry import opencode_servers
 
 EPILOG = Text.from_markup(
@@ -52,7 +52,7 @@ def ensure_node_installed():
     npx_cmd = shutil.which("npx")
 
     if node_cmd and npm_cmd and npx_cmd:
-        result = subprocess.run(["node", "--version"], capture_output=True, text=True, check=True)
+        result = subprocess.run(resolve_executable(["node", "--version"]), capture_output=True, text=True, check=True)
         info(f"Node.js found: {result.stdout.strip()}")
         return node_cmd, npm_cmd, npx_cmd
 
@@ -152,7 +152,9 @@ def opencode_version():
     if not shutil.which("opencode"):
         return None
     try:
-        result = subprocess.run(["opencode", "--version"], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            resolve_executable(["opencode", "--version"]), capture_output=True, text=True, timeout=30
+        )
         return result.stdout.strip() or "unknown"
     except Exception:
         return "unknown"
@@ -293,7 +295,7 @@ def verify_mcp_servers():
     for name, cmd in _local_mcp_commands():
         try:
             result = subprocess.run(
-                cmd,
+                resolve_executable(cmd),
                 input=init_message,
                 capture_output=True,
                 text=True,
