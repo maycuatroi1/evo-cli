@@ -52,7 +52,14 @@ def ensure_node_installed():
     npx_cmd = shutil.which("npx")
 
     if node_cmd and npm_cmd and npx_cmd:
-        result = subprocess.run(resolve_executable(["node", "--version"]), capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            resolve_executable(["node", "--version"]),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
         info(f"Node.js found: {result.stdout.strip()}")
         return node_cmd, npm_cmd, npx_cmd
 
@@ -153,7 +160,12 @@ def opencode_version():
         return None
     try:
         result = subprocess.run(
-            resolve_executable(["opencode", "--version"]), capture_output=True, text=True, timeout=30
+            resolve_executable(["opencode", "--version"]),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
         )
         return result.stdout.strip() or "unknown"
     except Exception:
@@ -299,6 +311,8 @@ def verify_mcp_servers():
                 input=init_message,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
             )
             if result.returncode == 0 and '"jsonrpc":"2.0"' in result.stdout:

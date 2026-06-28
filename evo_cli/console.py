@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+import sys
 import urllib.request
 
 from rich.console import Console
@@ -12,6 +13,14 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.theme import Theme
+
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if _reconfigure is not None:
+        try:
+            _reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
 
 EVO_THEME = Theme(
     {
@@ -67,7 +76,13 @@ def run_command(cmd, capture=False, check=True, input_text=None, status=None, ti
     console.print(f"[cmd]$ {' '.join(cmd)}[/cmd]")
     exec_cmd = resolve_executable(cmd)
 
-    run_kwargs = {"text": True, "input": input_text, "timeout": timeout}
+    run_kwargs = {
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "input": input_text,
+        "timeout": timeout,
+    }
     # subprocess.run rejects passing both `input` and `stdin`. Only attach an
     # explicit stdin (e.g. DEVNULL) when we are not feeding input, so callers can
     # detach a child from the terminal and avoid it blocking on an inherited TTY.
