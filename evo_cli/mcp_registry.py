@@ -22,12 +22,12 @@ MCP_REGISTRY = {
         "homepage": "https://github.com/microsoft/playwright-mcp",
         "description": "Playwright (Microsoft) - drive a real browser: navigate, click, snapshot.",
     },
-    "google-search": {
-        "transport": "stdio",
-        "command": ["npx", "-y", "@mcp-server/google-search-mcp@latest"],
+    "exa": {
+        "transport": "http",
+        "url": "https://mcp.exa.ai/mcp",
         "category": "search",
-        "homepage": "https://www.npmjs.com/package/@mcp-server/google-search-mcp",
-        "description": "Google Search - run web searches and fetch result pages.",
+        "homepage": "https://exa.ai/docs/reference/exa-mcp",
+        "description": "Exa - AI web search (hosted MCP, free tier, no API key).",
     },
     "sequential-thinking": {
         "transport": "stdio",

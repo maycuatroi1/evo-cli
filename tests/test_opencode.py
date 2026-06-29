@@ -7,8 +7,10 @@ from click.testing import CliRunner
 from evo_cli.cli import cli
 from evo_cli.commands.opencode import (
     DEFAULT_MCP_SERVERS,
+    EXA_ENV_VAR,
     configure_opencode_global,
     configure_opencode_project,
+    enable_exa_websearch,
     install_mcp_servers,
     install_opencode,
     load_jsonc,
@@ -55,7 +57,6 @@ def test_merge_mcp_config_preserves_existing():
     existing = {"mcp": {"playwright": {"enabled": False}}}
     merged = merge_mcp_config(existing, DEFAULT_MCP_SERVERS)
     assert merged["mcp"]["playwright"]["enabled"] is False
-    assert merged["mcp"]["google-search"]["enabled"] is True
 
 
 def test_configure_opencode_global(tmp_path, monkeypatch):
@@ -66,14 +67,33 @@ def test_configure_opencode_global(tmp_path, monkeypatch):
     path = configure_opencode_global()
     data = load_jsonc(path)
     assert "mcp" in data
-    assert set(data["mcp"].keys()) == {"google-search", "playwright"}
+    assert set(data["mcp"].keys()) == {"playwright"}
 
 
 def test_configure_opencode_project(tmp_path):
     path = configure_opencode_project(tmp_path)
     data = load_jsonc(path)
     assert "mcp" in data
-    assert set(data["mcp"].keys()) == {"google-search", "playwright"}
+    assert set(data["mcp"].keys()) == {"playwright"}
+
+
+def test_enable_exa_websearch_writes_export(tmp_path, monkeypatch):
+    rc = tmp_path / ".zshrc"
+    monkeypatch.setattr("evo_cli.commands.opencode.is_windows", lambda: False)
+    monkeypatch.setattr("evo_cli.commands.opencode.get_shell_rc_path", lambda: rc)
+
+    enable_exa_websearch()
+    assert f"export {EXA_ENV_VAR}=1" in rc.read_text()
+
+
+def test_enable_exa_websearch_is_idempotent(tmp_path, monkeypatch):
+    rc = tmp_path / ".zshrc"
+    monkeypatch.setattr("evo_cli.commands.opencode.is_windows", lambda: False)
+    monkeypatch.setattr("evo_cli.commands.opencode.get_shell_rc_path", lambda: rc)
+
+    enable_exa_websearch()
+    enable_exa_websearch()
+    assert rc.read_text().count(f"export {EXA_ENV_VAR}=1") == 1
 
 
 def test_install_mcp_servers_detaches_stdin_and_sets_timeout(monkeypatch):
@@ -141,6 +161,7 @@ def test_setup_opencode_skip_install(runner, tmp_path, monkeypatch):
     monkeypatch.setattr("evo_cli.commands.opencode.install_mcp_servers", lambda: None)
     monkeypatch.setattr("evo_cli.commands.opencode.install_playwright_browsers", lambda: None)
     monkeypatch.setattr("evo_cli.commands.opencode.verify_mcp_servers", lambda: None)
+    monkeypatch.setattr("evo_cli.commands.opencode.enable_exa_websearch", lambda: None)
 
     result = runner.invoke(cli, ["setup", "opencode", "--global-only", "--skip-install"])
     assert result.exit_code == 0
@@ -159,6 +180,7 @@ def test_setup_opencode_writes_global_and_project(runner, tmp_path, monkeypatch)
     monkeypatch.setattr("evo_cli.commands.opencode.install_mcp_servers", lambda: None)
     monkeypatch.setattr("evo_cli.commands.opencode.install_playwright_browsers", lambda: None)
     monkeypatch.setattr("evo_cli.commands.opencode.verify_mcp_servers", lambda: None)
+    monkeypatch.setattr("evo_cli.commands.opencode.enable_exa_websearch", lambda: None)
 
     result = runner.invoke(cli, ["setup", "opencode", "--project", str(tmp_path)])
     assert result.exit_code == 0
@@ -180,6 +202,7 @@ def test_setup_opencode_global_only(runner, tmp_path, monkeypatch):
     monkeypatch.setattr("evo_cli.commands.opencode.install_mcp_servers", lambda: None)
     monkeypatch.setattr("evo_cli.commands.opencode.install_playwright_browsers", lambda: None)
     monkeypatch.setattr("evo_cli.commands.opencode.verify_mcp_servers", lambda: None)
+    monkeypatch.setattr("evo_cli.commands.opencode.enable_exa_websearch", lambda: None)
 
     project = tmp_path / "project"
     project.mkdir()

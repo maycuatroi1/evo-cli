@@ -1,6 +1,7 @@
 """Install and configure OpenCode with common MCP servers."""
 
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -22,7 +23,13 @@ EPILOG = Text.from_markup(
 
 # Servers bootstrapped by `evo setup opencode`, pulled from the shared library
 # (evo_cli/mcp_registry.py). Add more servers anytime with `evo mcp add <name>`.
-DEFAULT_MCP_SERVERS = opencode_servers("google-search", "playwright")
+# Web search is handled by OpenCode's native Exa-backed `websearch` tool (enabled
+# via OPENCODE_ENABLE_EXA, no API key), not a scraping MCP server.
+DEFAULT_MCP_SERVERS = opencode_servers("playwright")
+
+# OpenCode's built-in `websearch` tool only activates for the OpenCode provider or
+# when this env var is truthy, so custom providers need it set explicitly.
+EXA_ENV_VAR = "OPENCODE_ENABLE_EXA"
 
 
 def _local_mcp_commands():
@@ -323,6 +330,51 @@ def verify_mcp_servers():
             warning(f"Could not verify MCP server [accent]{name}[/accent]: {exc}")
 
 
+def get_shell_rc_path():
+    """Return the shell rc file to wire env vars into, based on the active shell."""
+    shell = os.environ.get("SHELL", "")
+    home = Path.home()
+    if shell.endswith("zsh"):
+        return home / ".zshrc"
+    if shell.endswith("bash"):
+        # macOS login shells read .bash_profile; Linux reads .bashrc.
+        return home / (".bash_profile" if platform.system() == "Darwin" else ".bashrc")
+    if shell.endswith("fish"):
+        return home / ".config" / "fish" / "config.fish"
+    return home / ".profile"
+
+
+def enable_exa_websearch():
+    """Enable OpenCode's built-in Exa web search via the OPENCODE_ENABLE_EXA env var.
+
+    OpenCode ships a native ``websearch`` tool backed by Exa's hosted MCP service
+    (no API key needed), but it is only active when using the OpenCode provider or
+    when ``OPENCODE_ENABLE_EXA`` is truthy. Custom providers therefore need the env
+    var, so wire it into the shell rc idempotently.
+    """
+    step("Enabling Exa web search")
+    if is_windows():
+        info(f"Set the {EXA_ENV_VAR}=1 environment variable to enable web search.")
+        info("PowerShell: [accent]setx OPENCODE_ENABLE_EXA 1[/accent]")
+        return
+
+    rc_path = get_shell_rc_path()
+    if rc_path.exists() and EXA_ENV_VAR in rc_path.read_text(encoding="utf-8"):
+        info(f"{EXA_ENV_VAR} already set in [accent]{rc_path}[/accent]; skipping")
+        success("Exa web search already enabled")
+        return
+
+    rc_path.parent.mkdir(parents=True, exist_ok=True)
+    block = (
+        "\n# opencode web search (Exa native, no API key) - added by evo setup opencode\n"
+        f"export {EXA_ENV_VAR}=1\n"
+    )
+    with rc_path.open("a", encoding="utf-8") as fh:
+        fh.write(block)
+    success(f"Enabled Exa web search in [accent]{rc_path}[/accent]")
+    info(f"Run [accent]source {rc_path}[/accent] or open a new terminal to apply.")
+
+
 def run_setup_opencode(global_only, project, skip_install=False):
     step("evo setup opencode")
 
@@ -334,6 +386,7 @@ def run_setup_opencode(global_only, project, skip_install=False):
 
     if not skip_install:
         install_opencode(npm_cmd)
+    enable_exa_websearch()
     install_mcp_servers()
     install_playwright_browsers()
 
@@ -357,8 +410,9 @@ def run_setup_opencode(global_only, project, skip_install=False):
     )
     console.print(
         Panel(
-            f"OpenCode configured with google-search and playwright MCP servers.\n\n{paths_text}\n\n"
-            f"{opencode_note} Restart OpenCode to load the new MCP tools.",
+            "OpenCode web search enabled via Exa (native, no API key); "
+            f"playwright MCP server configured for browser automation.\n\n{paths_text}\n\n"
+            f"{opencode_note} Open a new terminal (or `source` your shell rc), then restart OpenCode.",
             title="setup opencode complete",
             border_style="success",
             expand=False,
@@ -387,9 +441,11 @@ def setup_opencode(global_only, skip_install, project):
 
     This command bootstraps a fresh machine with the same OpenCode + MCP setup
     used across devices. It installs the OpenCode CLI (via npm, unless
-    --skip-install) and the google-search and playwright MCP servers, downloads
-    the Playwright Chromium browser, and writes both global
-    (~/.config/opencode/opencode.jsonc) and project-level (opencode.json) configs.
+    --skip-install), enables OpenCode's native Exa-backed web search (via the
+    OPENCODE_ENABLE_EXA env var, no API key required), installs the playwright MCP
+    server for browser automation, downloads the Playwright Chromium browser, and
+    writes both global (~/.config/opencode/opencode.jsonc) and project-level
+    (opencode.json) configs.
 
     No credentials are bundled; only public MCP server references are added.
     """
