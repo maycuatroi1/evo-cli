@@ -1,9 +1,11 @@
 import rich_click as click
 
 from evo_cli import __version__
+from evo_cli.commands.claude_code import setup_claude
 from evo_cli.commands.cloudflare import cfssh
 from evo_cli.commands.fix_claude import f_claude
 from evo_cli.commands.gdrive import gdrive
+from evo_cli.commands.gh import setup_gh
 from evo_cli.commands.localproxy import localproxy
 from evo_cli.commands.mcp import mcp_group
 from evo_cli.commands.miniconda import miniconda
@@ -19,6 +21,7 @@ from evo_cli.commands.wifi import wifi
 @click.group("setup", help="Set up development tools and environments.")
 def setup_group():
     """Commands for bootstrapping tools on a fresh machine."""
+
 
 click.rich_click.USE_MARKDOWN = True
 click.rich_click.SHOW_ARGUMENTS = True
@@ -41,6 +44,8 @@ def cli():
     """
 
 
+setup_group.add_command(setup_claude)
+setup_group.add_command(setup_gh)
 setup_group.add_command(setup_opencode)
 setup_group.add_command(miniconda)
 setup_group.add_command(setupssh)
