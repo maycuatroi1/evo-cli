@@ -4,6 +4,7 @@ import sys
 import urllib.request
 
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -73,7 +74,10 @@ def resolve_executable(cmd):
 
 def run_command(cmd, capture=False, check=True, input_text=None, status=None, timeout=None, stdin=None):
     cmd = [str(part) for part in cmd]
-    console.print(f"[cmd]$ {' '.join(cmd)}[/cmd]")
+    # Escape the echo: a command containing brackets (an apt sources line, a
+    # regex) would otherwise be parsed as rich markup and printed with those
+    # parts silently missing, i.e. showing a command we did not run.
+    console.print(f"[cmd]$ {escape(' '.join(cmd))}[/cmd]")
     exec_cmd = resolve_executable(cmd)
 
     run_kwargs = {

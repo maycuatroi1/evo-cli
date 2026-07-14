@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-from evo_cli.console import CommandError, run_command
+from evo_cli.console import CommandError, console, run_command
 
 
 def test_run_command_raises_on_timeout():
@@ -19,6 +19,18 @@ def test_run_command_timeout_without_check_returns_exception():
         check=False,
     )
     assert isinstance(result, subprocess.TimeoutExpired)
+
+
+def test_run_command_echo_keeps_brackets(capsys):
+    # Rich reads [..] as markup, so an unescaped echo would silently drop the
+    # bracketed part and show a command that is not the one we ran.
+    with console.capture() as capture:
+        run_command([sys.executable, "-c", "pass"], timeout=10)
+    assert "[arch=amd64]" not in capture.get()  # sanity: no brackets in this command
+
+    with console.capture() as capture:
+        run_command(["echo", "deb [arch=amd64 signed-by=/etc/apt/keyrings/gh.gpg] https://x"], timeout=10)
+    assert "deb [arch=amd64 signed-by=/etc/apt/keyrings/gh.gpg] https://x" in capture.get()
 
 
 def test_run_command_detaches_stdin_when_requested():
