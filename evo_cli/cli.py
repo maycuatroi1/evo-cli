@@ -3,6 +3,7 @@ import rich_click as click
 from evo_cli import __version__
 from evo_cli.commands.claude_code import setup_claude
 from evo_cli.commands.cloudflare import cfssh
+from evo_cli.commands.cred import cred_group
 from evo_cli.commands.download import download
 from evo_cli.commands.fix_claude import f_claude
 from evo_cli.commands.gdrive import gdrive
@@ -57,6 +58,7 @@ setup_group.add_command(setupssh)
 
 cli.add_command(setup_group)
 cli.add_command(cfssh)
+cli.add_command(cred_group)
 cli.add_command(download)
 cli.add_command(f_claude)
 cli.add_command(gdrive)
