@@ -149,3 +149,49 @@ evo harness pull --dry-run
 The command reads `harness.yaml` and its optional `harness.local.yaml` overlay. Repositories marked
 `present: false` are skipped. Repositories with uncommitted changes are not modified, and every pull
 uses `git pull --ff-only` so the command never creates merge commits.
+
+#### Text to Speech
+
+Synthesise speech through Vbee (Vietnamese) or OpenAI `gpt-4o-mini-tts`, and play it right away:
+
+```bash
+evo tts speak "Xin chào, bản build đã xong"
+evo tts speak -f notes.md -o notes.mp3
+evo tts speak "hello there" -p openai -V nova --instructions "calm and encouraging"
+git log -1 --format=%s | evo tts speak
+```
+
+`speak` is the realtime path. Text longer than the provider's per-request limit (Vbee 300
+characters, OpenAI 4000) is split on sentence boundaries and the audio is joined back into one file,
+so the first words start playing while the rest is still being synthesised.
+
+For bulk work use the batch path, which goes through Vbee's async API and polls
+`/v1/tts/requests/{id}` until each audio link appears:
+
+```bash
+evo tts batch chapters/ -o audio/          # one mp3 per .txt/.md file
+evo tts batch a.txt b.txt -c 8             # 8 items in flight
+evo tts batch --manifest jobs.jsonl        # {"id":.., "text":.., "voice":..} per line
+```
+
+OpenAI has no batch speech endpoint, so with `-p openai` the items are parallelised locally instead.
+
+Voice codes come from `evo tts voices` (`-l en-US`, `--gender male`, `-p openai`, `--json`).
+
+Credentials live in the omelet store, never in flags or source:
+
+```bash
+evo cred add vbee.app_id --from-stdin      # UUID from https://studio.vbee.vn/apps
+evo cred add vbee.token --from-stdin       # JWT from the same app page
+evo cred add openai_api_key --from-stdin
+```
+
+`VBEE_APP_ID`, `VBEE_TOKEN`, and `OPENAI_API_KEY` override the store when set. `--provider auto`
+(the default) picks Vbee when its credentials exist, otherwise OpenAI.
+
+Playback uses whichever of `ffplay`, `mpv`, `cvlc`, `afplay`, or `paplay`/`aplay` is on PATH, and
+falls back to PowerShell's `MediaPlayer` on Windows. Without any of them the audio is still written
+to disk and the command warns.
+
+The same engine backs the `evo-tts` MCP server in
+[agent-skills](https://github.com/maycuatroi1/agent-skills), which gives an agent a `speak` tool.

@@ -20,6 +20,7 @@ from evo_cli.commands.plantuml import plantuml
 from evo_cli.commands.site2s import site2s
 from evo_cli.commands.ssh import setupssh
 from evo_cli.commands.sysmon import sysmon
+from evo_cli.commands.tts import tts_group
 from evo_cli.commands.update import update
 from evo_cli.commands.wifi import wifi
 
@@ -71,6 +72,7 @@ cli.add_command(mcp_group)
 cli.add_command(netcheck)
 cli.add_command(plantuml)
 cli.add_command(sysmon)
+cli.add_command(tts_group)
 cli.add_command(update)
 cli.add_command(wifi)
 

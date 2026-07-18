@@ -61,6 +61,17 @@ SPECS = [
         "keys": ["openai_api_key"],
     },
     {
+        "path": "ai/vbee.json",
+        "id": "vbee",
+        "service": "Vbee AIVoice",
+        "category": "ai",
+        "type": "api_key",
+        "lifetime": "token expires per app setting (7/30/60/90 days or never)",
+        "description": "Vbee TTS app id + JWT token (evo tts, agent speak MCP)",
+        "rotate": "https://studio.vbee.vn/apps -> open the app -> copy App ID + Token",
+        "keys": ["vbee"],
+    },
+    {
         "path": "ai/google.json",
         "id": "google_api",
         "service": "Google API key",

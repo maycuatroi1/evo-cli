@@ -1,0 +1,2 @@
+class TtsError(RuntimeError):
+    pass
