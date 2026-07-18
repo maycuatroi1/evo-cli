@@ -2,7 +2,7 @@ import pytest
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
-from evo_cli.commands.mcp import resolve_spec, to_opencode_config
+from evo_cli.commands.mcp import add_to_claude, resolve_spec, to_opencode_config
 from evo_cli.commands.opencode import load_jsonc
 
 
@@ -128,3 +128,47 @@ def test_add_rejects_both_only_flags(runner, tmp_path, monkeypatch):
     )
     assert result.exit_code == 0
     assert "mutually exclusive" in result.output
+
+
+def test_claude_add_puts_the_name_before_the_variadic_env_flag(monkeypatch):
+    captured = []
+    monkeypatch.setattr("evo_cli.commands.mcp.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("evo_cli.commands.mcp.claude_has_server", lambda name: False)
+    monkeypatch.setattr("evo_cli.commands.mcp.run_command", lambda cmd, **kw: captured.append(cmd))
+
+    spec = {"transport": "stdio", "command": ["uv", "run", "server.py"], "env": {"A": "1", "B": "2"}}
+    add_to_claude("evo-tts", spec, "user")
+
+    cmd = captured[0]
+    # `claude mcp add` declares -e as variadic, so a name after it is swallowed as
+    # another KEY=value and the real CLI errors out.
+    assert cmd.index("evo-tts") < cmd.index("-e")
+    assert cmd[cmd.index("--") + 1 :] == ["uv", "run", "server.py"]
+    assert "A=1" in cmd and "B=2" in cmd
+
+
+def test_opencode_add_leaves_an_existing_entry_alone_without_force(runner, tmp_path, monkeypatch):
+    global_path = tmp_path / "global.jsonc"
+    monkeypatch.setattr("evo_cli.commands.mcp.get_global_config_path", lambda: global_path)
+
+    runner.invoke(cli, ["mcp", "add", "srv", "--opencode-only", "--command", "old cmd"])
+    result = runner.invoke(cli, ["mcp", "add", "srv", "--opencode-only", "--command", "new cmd"])
+
+    assert result.exit_code == 0
+    assert load_jsonc(global_path)["mcp"]["srv"]["command"] == ["old", "cmd"]
+
+
+def test_opencode_add_force_replaces_the_entry(runner, tmp_path, monkeypatch):
+    global_path = tmp_path / "global.jsonc"
+    monkeypatch.setattr("evo_cli.commands.mcp.get_global_config_path", lambda: global_path)
+
+    runner.invoke(cli, ["mcp", "add", "srv", "--opencode-only", "--command", "old cmd"])
+    result = runner.invoke(
+        cli,
+        ["mcp", "add", "srv", "--opencode-only", "--force", "--env", "K=v", "--command", "new cmd"],
+    )
+
+    assert result.exit_code == 0
+    entry = load_jsonc(global_path)["mcp"]["srv"]
+    assert entry["command"] == ["new", "cmd"]
+    assert entry["environment"] == {"K": "v"}

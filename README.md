@@ -186,8 +186,19 @@ evo cred add vbee.token --from-stdin       # JWT from the same app page
 evo cred add openai_api_key --from-stdin
 ```
 
-`VBEE_APP_ID`, `VBEE_TOKEN`, and `OPENAI_API_KEY` override the store when set. `--provider auto`
-(the default) picks Vbee when its credentials exist, otherwise OpenAI.
+`VBEE_APP_ID`, `VBEE_TOKEN`, and `OPENAI_API_KEY` override the store when set.
+
+`--provider auto` (the default) resolves to `EVO_TTS_PROVIDER` when that is set, and otherwise to
+whichever provider has credentials. Pick a machine default once:
+
+```bash
+export EVO_TTS_PROVIDER=openai        # what `auto` means here
+export EVO_TTS_VOICE_OPENAI=nova      # default voice for that provider only
+```
+
+Prefer the provider-scoped `EVO_TTS_VOICE_OPENAI` / `EVO_TTS_VOICE_VBEE` over a bare
+`EVO_TTS_VOICE`: a shared value breaks as soon as you pass `--provider vbee`, because an OpenAI
+voice name is not a Vbee voice code.
 
 Playback uses whichever of `ffplay`, `mpv`, `cvlc`, `afplay`, or `paplay`/`aplay` is on PATH, and
 falls back to PowerShell's `MediaPlayer` on Windows. Without any of them the audio is still written

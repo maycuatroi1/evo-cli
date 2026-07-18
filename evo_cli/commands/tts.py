@@ -168,7 +168,7 @@ def speak(
         if not quiet and not to_stdout:
             info(
                 f"Provider [accent]{resolved}[/accent], voice "
-                f"[accent]{voice or core.default_voice(resolved)}[/accent], "
+                f"[accent]{voice or core.default_voice_for(resolved)}[/accent], "
                 f"{len(body.strip())} characters (limit {chunks}/request)"
             )
 

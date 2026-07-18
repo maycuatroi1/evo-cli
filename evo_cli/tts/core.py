@@ -1,3 +1,4 @@
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from evo_cli.tts import openai as openai_tts
@@ -15,6 +16,11 @@ def resolve_provider(provider):
     if provider in PROVIDERS:
         return provider
     if provider in (None, "", "auto"):
+        preferred = (os.environ.get("EVO_TTS_PROVIDER") or "").strip().lower()
+        if preferred in PROVIDERS:
+            return preferred
+        if preferred and preferred != "auto":
+            raise TtsError(f"EVO_TTS_PROVIDER is set to '{preferred}', which is not one of: {', '.join(PROVIDERS)}")
         if has_vbee_credentials():
             return "vbee"
         if has_openai_credentials():
@@ -25,6 +31,14 @@ def resolve_provider(provider):
             "or OpenAI with `evo cred add openai_api_key --from-stdin`."
         )
     raise TtsError(f"unknown provider '{provider}' (expected one of: {', '.join(PROVIDERS)}, auto)")
+
+
+def default_voice_for(provider):
+    # Provider-scoped first, so a machine configured for both does not hand a Vbee
+    # voice code to OpenAI the moment EVO_TTS_PROVIDER flips.
+    scoped = (os.environ.get(f"EVO_TTS_VOICE_{provider.upper()}") or "").strip()
+    shared = (os.environ.get("EVO_TTS_VOICE") or "").strip()
+    return scoped or shared or default_voice(provider)
 
 
 def default_voice(provider):
@@ -81,6 +95,7 @@ def synthesize(
     on_poll=None,
 ):
     provider = resolve_provider(provider)
+    voice = voice or default_voice_for(provider)
     if mode not in MODES:
         raise TtsError(f"unknown mode '{mode}' (expected one of: {', '.join(MODES)})")
     text = (text or "").strip()

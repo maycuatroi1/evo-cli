@@ -9,6 +9,24 @@ from evo_cli.tts import core, vbee
 from evo_cli.tts.chunking import join_audio, split_text
 from evo_cli.tts.errors import TtsError
 
+EVO_TTS_ENV_VARS = (
+    "EVO_TTS_PROVIDER",
+    "EVO_TTS_VOICE",
+    "EVO_TTS_VOICE_OPENAI",
+    "EVO_TTS_VOICE_VBEE",
+    "EVO_TTS_SPEED",
+    "EVO_TTS_DIR",
+)
+
+
+@pytest.fixture(autouse=True)
+def clean_tts_env(monkeypatch):
+    # These are set for real on machines that picked a default provider, and they
+    # would otherwise decide the outcome of the auto-detection tests. CI has none of
+    # them set, so without this the suite passes there and fails on a real desktop.
+    for name in EVO_TTS_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
 
 @pytest.fixture
 def runner():
@@ -258,3 +276,54 @@ def test_batch_exits_nonzero_when_an_item_fails(runner, monkeypatch, tmp_path):
     result = runner.invoke(cli, ["tts", "batch", "-t", "xin chào", "-o", str(tmp_path / "out")])
     assert result.exit_code == 1
     assert "nope" in result.output
+
+
+def test_resolve_provider_auto_follows_the_env_override(monkeypatch):
+    monkeypatch.setenv("EVO_TTS_PROVIDER", "openai")
+    monkeypatch.setattr(core, "has_vbee_credentials", lambda: True)
+    assert core.resolve_provider("auto") == "openai"
+
+
+def test_env_override_does_not_beat_an_explicit_provider(monkeypatch):
+    monkeypatch.setenv("EVO_TTS_PROVIDER", "openai")
+    assert core.resolve_provider("vbee") == "vbee"
+
+
+def test_resolve_provider_rejects_a_bogus_env_override(monkeypatch):
+    monkeypatch.setenv("EVO_TTS_PROVIDER", "elevenlabs")
+    with pytest.raises(TtsError, match="EVO_TTS_PROVIDER"):
+        core.resolve_provider("auto")
+
+
+def test_default_voice_for_falls_back_to_the_provider_default(monkeypatch):
+    monkeypatch.delenv("EVO_TTS_VOICE", raising=False)
+    monkeypatch.delenv("EVO_TTS_VOICE_OPENAI", raising=False)
+    assert core.default_voice_for("openai") == core.openai_tts.DEFAULT_VOICE
+    assert core.default_voice_for("vbee") == vbee.DEFAULT_VOICE
+
+
+def test_scoped_voice_env_wins_over_the_shared_one(monkeypatch):
+    monkeypatch.setenv("EVO_TTS_VOICE", "shared")
+    monkeypatch.setenv("EVO_TTS_VOICE_OPENAI", "nova")
+    assert core.default_voice_for("openai") == "nova"
+    assert core.default_voice_for("vbee") == "shared"
+
+
+def test_scoped_voice_does_not_leak_across_providers(monkeypatch):
+    monkeypatch.delenv("EVO_TTS_VOICE", raising=False)
+    monkeypatch.setenv("EVO_TTS_VOICE_OPENAI", "nova")
+    assert core.default_voice_for("vbee") == vbee.DEFAULT_VOICE
+
+
+def test_synthesize_applies_the_env_voice(monkeypatch):
+    monkeypatch.delenv("EVO_TTS_VOICE", raising=False)
+    monkeypatch.setenv("EVO_TTS_VOICE_OPENAI", "nova")
+    seen = {}
+
+    def fake_synthesize(text, **kwargs):
+        seen["voice"] = kwargs["voice"]
+        return b"x"
+
+    monkeypatch.setattr(core.openai_tts, "synthesize", fake_synthesize)
+    core.synthesize("xin chào", provider="openai")
+    assert seen["voice"] == "nova"
