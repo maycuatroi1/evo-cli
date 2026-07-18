@@ -1,10 +1,14 @@
+import importlib
 import json
 import subprocess
 
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
-from evo_cli.commands import harness as harness_command
+
+# harness/__init__ binds the command object to the name `pull`, shadowing the submodule,
+# so the module has to be fetched by path rather than imported by name.
+pull_command = importlib.import_module("evo_cli.commands.harness.pull")
 
 
 def _result(returncode=0, stdout="", stderr=""):
@@ -36,11 +40,11 @@ def test_pull_dry_run_honors_local_present_override(tmp_path, monkeypatch):
     (root / "harness.local.yaml").write_text("present:\n  beta: false\n", encoding="utf-8")
     calls = []
 
-    def fake_git(path, *args):
+    def fake_git(path, *args, **kwargs):
         calls.append((path, args))
         return _result()
 
-    monkeypatch.setattr(harness_command, "_git", fake_git)
+    monkeypatch.setattr(pull_command, "git", fake_git)
     result = CliRunner().invoke(cli, ["harness", "pull", "--harness", str(root), "--dry-run"])
 
     assert result.exit_code == 0
@@ -56,7 +60,7 @@ def test_pull_refuses_dirty_repo(tmp_path, monkeypatch):
     root = tmp_path / "cluster"
     _write_harness(root, workspace)
     (root / "harness.local.yaml").write_text("present:\n  beta: false\n", encoding="utf-8")
-    monkeypatch.setattr(harness_command, "_git", lambda path, *args: _result(stdout=" M local.txt\n"))
+    monkeypatch.setattr(pull_command, "git", lambda path, *args, **kwargs: _result(stdout=" M local.txt\n"))
 
     result = CliRunner().invoke(cli, ["harness", "pull", "--harness", str(root)])
 
@@ -72,13 +76,13 @@ def test_pull_uses_fast_forward_and_prune(tmp_path, monkeypatch):
     _write_harness(root, workspace)
     calls = []
 
-    def fake_git(path, *args):
+    def fake_git(path, *args, **kwargs):
         calls.append((path, args))
         if args[0] == "log":
             return _result(stdout="abc123 Latest change\n")
         return _result()
 
-    monkeypatch.setattr(harness_command, "_git", fake_git)
+    monkeypatch.setattr(pull_command, "git", fake_git)
     result = CliRunner().invoke(cli, ["harness", "pull", "--harness", str(root), "--repo", "alpha"])
 
     assert result.exit_code == 0
@@ -97,7 +101,7 @@ def test_pull_discovers_manifest_from_environment(tmp_path, monkeypatch):
     root = tmp_path / "cluster"
     _write_harness(root, workspace)
     monkeypatch.setenv("EVO_HARNESS", str(root))
-    monkeypatch.setattr(harness_command, "_git", lambda path, *args: _result())
+    monkeypatch.setattr(pull_command, "git", lambda path, *args, **kwargs: _result())
 
     result = CliRunner().invoke(cli, ["harness", "pull", "--repo", "alpha", "--dry-run"])
 
@@ -116,7 +120,7 @@ def test_pull_discovers_registered_member_repo(tmp_path, monkeypatch):
     registry.write_text(json.dumps({"clusters": [{"root": str(root)}]}), encoding="utf-8")
     monkeypatch.chdir(member)
     monkeypatch.setenv("EVO_HARNESS_REGISTRY", str(registry))
-    monkeypatch.setattr(harness_command, "_git", lambda path, *args: _result())
+    monkeypatch.setattr(pull_command, "git", lambda path, *args, **kwargs: _result())
 
     result = CliRunner().invoke(cli, ["harness", "pull", "--repo", "alpha", "--dry-run"])
 

@@ -206,3 +206,60 @@ to disk and the command warns.
 
 The same engine backs the `evo-tts` MCP server in
 [agent-skills](https://github.com/maycuatroi1/agent-skills), which gives an agent a `speak` tool.
+
+## `evo harness` - read a repo cluster
+
+A harness is a repo that describes a *cluster* of repos: `harness.yaml` lists them, `contracts.yaml`
+declares the seams between them (who owns what, who consumes it, what verifies it), and `plans/`
+holds exec-plans for changes that span several repos at once.
+
+`evo harness` finds that repo by walking up from the current directory to a `harness.yaml`, falling
+back to `~/.claude/harness/registry.json`, so every command works with no arguments from anywhere
+inside the cluster. Pass `--harness PATH` to override.
+
+```bash
+evo harness serve      # dashboard on http://127.0.0.1:8788
+evo harness repos      # repos in the manifest, with branch and dirty state
+evo harness seams      # contract seams; --graph for the owner -> consumer DAG
+evo harness plans      # progress across every exec-plan
+evo harness show <plan>
+evo harness check <plan> [--fetch]      # what the plan claims vs what git says
+evo harness graph <plan>:steps          # the same DAG as an adjacency list
+evo harness pull       # fast-forward every repo
+```
+
+### The dashboard
+
+`serve` draws every dependency in the cluster as a DAG: seam ownership between repos, repo merge
+order inside a plan, and step order built from `depends_on` / `depends_on_step` / `blocked_by` /
+`blocks`. It detects cycles (Tarjan) and reports them, because a cycle means no merge order
+satisfies every seam - which is exactly the thing a plan gets wrong silently.
+
+Every graph has a **table view** beside it. A node-link diagram conveys nothing to a screen reader
+and cannot be pasted into a document, so the adjacency list is a first-class view rather than a
+fallback, and the terminal gets the same data from `evo harness graph`.
+
+The dashboard is **read-only**. Plan YAML is folded block scalars and hand-written prose; re-emitting
+it with a YAML dumper would destroy the formatting. Writes go through the CLI, which splices the one
+line it needs and refuses to save if the reparsed file is not exactly the intended change:
+
+```bash
+evo harness step <plan> 3 done --note "..."   # keyed by the step's `id` (or `order`)
+evo harness debt <plan> 0 fixed
+evo harness question <plan> 1 answered
+evo harness repo <plan> 2 merged
+```
+
+The server is stdlib `http.server`, so `serve` needs no dependency beyond what `pip install evo_cli`
+already brings.
+
+### Building the dashboard bundle
+
+Release wheels ship the built bundle, so users never need Node. Only changing the UI does:
+
+```bash
+cd web && npm install && npm run build
+```
+
+That writes `evo_cli/commands/harness/web/`, which is committed. `npm run dev` serves the UI on
+:5178 and proxies `/api` to a running `evo harness serve` for a live-reload loop.

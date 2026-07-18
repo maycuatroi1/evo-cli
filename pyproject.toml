@@ -48,7 +48,7 @@ include = ["evo_cli*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-evo_cli = ["VERSION"]
+evo_cli = ["VERSION", "commands/harness/web/index.html", "commands/harness/web/assets/*"]
 
 [tool.ruff]
 line-length = 120

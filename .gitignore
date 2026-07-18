@@ -131,3 +131,9 @@ dmypy.json
 # templates
 .github/templates/*
 .claude/skills/learned/.processed/
+
+# Dashboard sources for `evo harness serve`. The built bundle at
+# evo_cli/commands/harness/web/ IS committed - a release wheel ships it so the
+# command works without Node. Only the build inputs are ignored.
+web/node_modules/
+web/.vite/
