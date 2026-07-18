@@ -42,14 +42,19 @@ def is_windows():
 
 
 def get_global_config_dir():
-    home = Path.home()
-    if is_windows():
-        return home / "AppData" / "Roaming" / "opencode"
-    return home / ".config" / "opencode"
+    # OpenCode reads ~/.config/opencode on every platform, Windows included - it does
+    # not follow the %APPDATA% convention. Writing to AppData produced a file that
+    # `opencode mcp list` never saw, so every server evo "added" was silently inert.
+    return Path.home() / ".config" / "opencode"
 
 
 def get_global_config_path():
-    return get_global_config_dir() / "opencode.jsonc"
+    directory = get_global_config_dir()
+    for name in ("opencode.jsonc", "opencode.json"):
+        candidate = directory / name
+        if candidate.exists():
+            return candidate
+    return directory / "opencode.jsonc"
 
 
 def ensure_node_installed():

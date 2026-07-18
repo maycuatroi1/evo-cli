@@ -5,6 +5,7 @@ import pytest
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
+from evo_cli.commands import opencode
 from evo_cli.commands.opencode import (
     DEFAULT_MCP_SERVERS,
     EXA_ENV_VAR,
@@ -209,3 +210,34 @@ def test_setup_opencode_global_only(runner, tmp_path, monkeypatch):
     result = runner.invoke(cli, ["setup", "opencode", "--global-only", "--project", str(project)])
     assert result.exit_code == 0
     assert not (project / "opencode.json").exists()
+
+
+def test_global_config_dir_is_xdg_style_on_every_platform(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode.Path, "home", classmethod(lambda cls: tmp_path))
+    for system in ("Windows", "Linux", "Darwin"):
+        monkeypatch.setattr(opencode.platform, "system", lambda system=system: system)
+        assert opencode.get_global_config_dir() == tmp_path / ".config" / "opencode"
+
+
+def test_global_config_path_reuses_an_existing_json_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode.Path, "home", classmethod(lambda cls: tmp_path))
+    directory = tmp_path / ".config" / "opencode"
+    directory.mkdir(parents=True)
+    existing = directory / "opencode.json"
+    existing.write_text("{}", encoding="utf-8")
+    assert opencode.get_global_config_path() == existing
+
+
+def test_global_config_path_prefers_jsonc_when_both_exist(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode.Path, "home", classmethod(lambda cls: tmp_path))
+    directory = tmp_path / ".config" / "opencode"
+    directory.mkdir(parents=True)
+    (directory / "opencode.json").write_text("{}", encoding="utf-8")
+    (directory / "opencode.jsonc").write_text("{}", encoding="utf-8")
+    assert opencode.get_global_config_path() == directory / "opencode.jsonc"
+
+
+def test_global_config_path_defaults_to_jsonc_when_nothing_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode.Path, "home", classmethod(lambda cls: tmp_path))
+    expected = tmp_path / ".config" / "opencode" / "opencode.jsonc"
+    assert opencode.get_global_config_path() == expected
