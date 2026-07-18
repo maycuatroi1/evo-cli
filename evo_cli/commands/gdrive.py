@@ -1,22 +1,23 @@
 import base64
 import json
 import mimetypes
-import os
 import re
 import sys
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import rich_click as click
 from rich.text import Text
 
 from evo_cli.console import error, info, step, success, warning
+from evo_cli.credentials import google_oauth
+from evo_cli.credentials.registry import dig, load_entries
+from evo_cli.credentials.store import compile_flat
 
-CONFIG_PATH = Path(os.environ.get("OMELET_CONFIG", str(Path.home() / ".omelet.json")))
+DRIVE_SERVICE_ID = "google_drive"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 DOCS_API = "https://docs.googleapis.com/v1/documents/{doc_id}"
 DRIVE_FILE_API = "https://www.googleapis.com/drive/v3/files/{file_id}"
@@ -48,24 +49,14 @@ def extract_doc_id(value):
     return None
 
 
-def read_config():
-    if not CONFIG_PATH.exists():
-        raise click.ClickException(f"config not found: {CONFIG_PATH}")
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-
-
-def write_config(data):
-    tmp = tempfile.NamedTemporaryFile("w", delete=False, dir=str(CONFIG_PATH.parent), encoding="utf-8")
-    try:
-        json.dump(data, tmp, indent=2, ensure_ascii=False)
-        tmp.write("\n")
-        tmp.close()
-        os.chmod(tmp.name, 0o600)
-        os.replace(tmp.name, CONFIG_PATH)
-    except Exception:
-        if os.path.exists(tmp.name):
-            os.unlink(tmp.name)
-        raise
+def drive_entry():
+    for path, entry in load_entries():
+        if entry.get("id") == DRIVE_SERVICE_ID and entry.get("oauth"):
+            return path, entry
+    raise click.ClickException(
+        f"no '{DRIVE_SERVICE_ID}' oauth entry in the credential store. "
+        "Authorise it once with: evo cred auth --service google-drive --client-secrets <client.json>"
+    )
 
 
 def token_expired(token_section):
@@ -73,7 +64,7 @@ def token_expired(token_section):
     if not expiry:
         return True
     try:
-        when = datetime.fromisoformat(expiry)
+        when = datetime.fromisoformat(str(expiry).replace("Z", "+00:00"))
     except ValueError:
         return True
     if when.tzinfo is None:
@@ -82,62 +73,31 @@ def token_expired(token_section):
     return (when - now).total_seconds() < 60
 
 
-def refresh_token(data):
-    rclone_section = data.get("rclone", {})
-    token_section = rclone_section.get("token", {})
-    refresh = token_section.get("refresh_token")
-    if not refresh:
-        raise click.ClickException("rclone.token.refresh_token missing in config")
-
-    client_id = os.environ.get("RCLONE_DRIVE_CLIENT_ID") or rclone_section.get("client_id")
-    client_secret = os.environ.get("RCLONE_DRIVE_CLIENT_SECRET") or rclone_section.get("client_secret")
-    if not client_id or not client_secret:
+def refresh_token(path, entry):
+    creds, err = google_oauth.resolve_creds(entry)
+    if err:
         raise click.ClickException(
-            "OAuth client credentials required. Set RCLONE_DRIVE_CLIENT_ID + RCLONE_DRIVE_CLIENT_SECRET "
-            "or add rclone.client_id + rclone.client_secret to the config."
+            f"cannot refresh {DRIVE_SERVICE_ID}: {err}. "
+            "Authorise once with: evo cred auth --service google-drive --client-secrets <client.json>"
         )
-
-    payload = urllib.parse.urlencode(
-        {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh,
-            "grant_type": "refresh_token",
-        }
-    ).encode("utf-8")
-    req = urllib.request.Request(TOKEN_URL, data=payload, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        err_body = exc.read().decode("utf-8", "replace")
-        raise click.ClickException(f"token refresh failed: HTTP {exc.code} {err_body}") from exc
+        expiry = google_oauth.refresh_entry(path, entry, creds)
+    except Exception as exc:
+        raise click.ClickException(f"token refresh failed: {google_oauth.describe_error(exc)}") from exc
 
-    access = body.get("access_token")
-    if not access:
-        raise click.ClickException(f"no access_token in refresh response: {body}")
-
-    expires_in = int(body.get("expires_in", 3600))
-    tz = timezone(timedelta(hours=7))
-    expiry = (datetime.now(tz) + timedelta(seconds=expires_in)).isoformat()
-
-    data["rclone"]["token"]["access_token"] = access
-    data["rclone"]["token"]["expiry"] = expiry
-    data["rclone"]["token"]["expires_in"] = expires_in
-    write_config(data)
+    compile_flat()
     info(f"Refreshed Drive access token (valid until [accent]{expiry}[/accent])")
-    return access
+    return creds["container"][entry["oauth"]["access_field"]]
 
 
 def access_token():
-    data = read_config()
-    token_section = data.get("rclone", {}).get("token", {})
-    token = token_section.get("access_token")
-    if not token or token_expired(token_section):
+    path, entry = drive_entry()
+    oauth = entry["oauth"]
+    container = dig(entry.get("flat", {}), oauth["container"]) or {}
+    token = container.get(oauth["access_field"])
+    if not token or token_expired(container):
         info("Access token missing or expired - refreshing.")
-        token = refresh_token(data)
+        token = refresh_token(path, entry)
     return token
 
 

@@ -1,11 +1,13 @@
 import json
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
+from evo_cli.commands import gdrive
 from evo_cli.credentials import doctor as doctor_module
-from evo_cli.credentials import migrate, registry
+from evo_cli.credentials import migrate, oauth_flow, registry
 from evo_cli.credentials.store import compile_flat, get_value, set_value
 
 
@@ -28,7 +30,7 @@ def _write(store, rel, entry):
 
 def test_cred_command_is_registered():
     assert "cred" in cli.commands
-    for name in ("get", "list", "doctor", "compile", "add", "refresh", "migrate", "sync", "path"):
+    for name in ("get", "list", "doctor", "compile", "add", "auth", "refresh", "migrate", "sync", "path"):
         assert name in cli.commands["cred"].commands
     assert set(cli.commands["cred"].commands["sync"].commands) == {"push", "pull"}
 
@@ -170,7 +172,11 @@ def test_doctor_flags_expired_oauth_and_exits_nonzero(store):
 
 
 def test_secret_preview_masks_and_never_shows_full_value(store):
-    _write(store, "ai/openai.json", {"id": "openai", "service": "OpenAI", "flat": {"openai_api_key": "sk-abcdefghijklmnop"}})
+    _write(
+        store,
+        "ai/openai.json",
+        {"id": "openai", "service": "OpenAI", "flat": {"openai_api_key": "sk-abcdefghijklmnop"}},
+    )
     _write(store, "tools/short.json", {"id": "short", "service": "Short", "flat": {"short_token": "tiny"}})
 
     previews = {row["service"]: row["secret"] for row in doctor_module.scan()}
@@ -261,8 +267,12 @@ def test_refresh_writes_new_token_and_recompiles(store, monkeypatch):
         {
             "id": "gmail",
             "service": "Gmail",
-            "oauth": {"container": ["gmail", "token"], "access_field": "token", "expiry_field": "expiry",
-                      "client_from": ["gmail", "token"]},
+            "oauth": {
+                "container": ["gmail", "token"],
+                "access_field": "token",
+                "expiry_field": "expiry",
+                "client_from": ["gmail", "token"],
+            },
             "flat": {
                 "gmail": {
                     "token": {
@@ -293,9 +303,15 @@ def test_refresh_dry_run_does_not_write(store, monkeypatch):
         "google-oauth/gmail.json",
         {
             "id": "gmail",
-            "oauth": {"container": ["gmail", "token"], "access_field": "token", "expiry_field": "expiry",
-                      "client_from": ["gmail", "token"]},
-            "flat": {"gmail": {"token": {"token": "old", "refresh_token": "rt", "client_id": "c", "client_secret": "s"}}},
+            "oauth": {
+                "container": ["gmail", "token"],
+                "access_field": "token",
+                "expiry_field": "expiry",
+                "client_from": ["gmail", "token"],
+            },
+            "flat": {
+                "gmail": {"token": {"token": "old", "refresh_token": "rt", "client_id": "c", "client_secret": "s"}}
+            },
         },
     )
 
@@ -316,8 +332,12 @@ def test_refresh_skips_entry_without_refresh_token(store):
         "google-oauth/gmail.json",
         {
             "id": "gmail",
-            "oauth": {"container": ["gmail", "token"], "access_field": "token", "expiry_field": "expiry",
-                      "client_from": ["gmail", "token"]},
+            "oauth": {
+                "container": ["gmail", "token"],
+                "access_field": "token",
+                "expiry_field": "expiry",
+                "client_from": ["gmail", "token"],
+            },
             "flat": {"gmail": {"token": {"token": "old"}}},
         },
     )
@@ -340,3 +360,129 @@ def test_sync_requires_repo_env(store, monkeypatch):
 def test_registry_maps_contract_keys_to_specs():
     for key in ("rclone", "gmail", "google_drive", "google_calendar", "facebook", "openai_api_key"):
         assert registry.spec_for_flat_key(key) is not None
+
+
+def test_auth_command_is_registered():
+    assert "auth" in cli.commands["cred"].commands
+
+
+def test_build_auth_url_requests_offline_consent():
+    url = oauth_flow.build_auth_url("cid", "http://127.0.0.1:9999", ["scope/a", "scope/b"], "st8")
+
+    assert url.startswith(oauth_flow.AUTH_URL + "?")
+    query = parse_qs(urlparse(url).query)
+    assert query["client_id"] == ["cid"]
+    assert query["redirect_uri"] == ["http://127.0.0.1:9999"]
+    assert query["scope"] == ["scope/a scope/b"]
+    assert query["access_type"] == ["offline"]
+    assert query["prompt"] == ["consent"]
+    assert query["state"] == ["st8"]
+
+
+def test_client_from_secrets_file_reads_installed_block(tmp_path):
+    path = tmp_path / "client.json"
+    path.write_text(json.dumps({"installed": {"client_id": "cid", "client_secret": "cs"}}), encoding="utf-8")
+
+    assert oauth_flow.client_from_secrets_file(path) == ("cid", "cs")
+
+
+def test_client_from_secrets_file_rejects_a_file_without_a_client(tmp_path):
+    path = tmp_path / "client.json"
+    path.write_text(json.dumps({"nothing": True}), encoding="utf-8")
+
+    with pytest.raises(Exception) as excinfo:
+        oauth_flow.client_from_secrets_file(path)
+
+    assert "no client_id/client_secret" in str(excinfo.value)
+
+
+def test_store_tokens_refuses_a_response_without_refresh_token(store):
+    entry = {
+        "id": "google_drive",
+        "oauth": {"container": ["google_drive", "token"], "access_field": "token", "expiry_field": "expiry"},
+        "flat": {},
+    }
+
+    with pytest.raises(Exception) as excinfo:
+        oauth_flow.store_tokens(
+            store["dir"] / "google-oauth" / "google-drive.json",
+            entry,
+            {"access_token": "at", "expires_in": 3600},
+            ["s"],
+        )
+
+    assert "no refresh_token" in str(excinfo.value)
+
+
+def test_store_tokens_writes_token_refresh_and_scopes(store):
+    path = store["dir"] / "google-oauth" / "google-drive.json"
+    entry = {
+        "id": "google_drive",
+        "oauth": {"container": ["google_drive", "token"], "access_field": "token", "expiry_field": "expiry"},
+        "flat": {},
+    }
+
+    oauth_flow.store_tokens(
+        path,
+        entry,
+        {"access_token": "at", "refresh_token": "rt", "expires_in": 3600},
+        ["https://www.googleapis.com/auth/drive.readonly"],
+    )
+
+    written = json.loads(path.read_text(encoding="utf-8"))["flat"]["google_drive"]["token"]
+    assert written["token"] == "at"
+    assert written["refresh_token"] == "rt"
+    assert written["scopes"] == ["https://www.googleapis.com/auth/drive.readonly"]
+    assert written["expiry"]
+
+
+def test_gdrive_reads_the_google_drive_entry_not_rclone(store):
+    _write(
+        store,
+        "google-oauth/rclone.json",
+        {
+            "id": "rclone",
+            "oauth": {
+                "container": ["rclone", "token"],
+                "access_field": "access_token",
+                "expiry_field": "expiry",
+                "client_from": ["rclone"],
+            },
+            "flat": {"rclone": {"token": {"access_token": "rclone-token", "expiry": "2099-01-01T00:00:00+00:00"}}},
+        },
+    )
+    _write(
+        store,
+        "google-oauth/google-drive.json",
+        {
+            "id": "google_drive",
+            "oauth": {
+                "container": ["google_drive", "token"],
+                "access_field": "token",
+                "expiry_field": "expiry",
+                "client_from": ["google_drive", "token"],
+            },
+            "flat": {"google_drive": {"token": {"token": "drive-token", "expiry": "2099-01-01T00:00:00+00:00"}}},
+        },
+    )
+
+    assert gdrive.access_token() == "drive-token"
+
+
+def test_gdrive_without_a_drive_entry_points_at_the_auth_command(store):
+    with pytest.raises(Exception) as excinfo:
+        gdrive.access_token()
+
+    assert "evo cred auth --service google-drive" in str(excinfo.value)
+
+
+def test_registry_drive_scope_is_readonly_not_full_drive():
+    spec = registry.spec_for_flat_key("google_drive")
+
+    assert spec["oauth"]["scopes"] == ["https://www.googleapis.com/auth/drive.readonly"]
+
+
+def test_rclone_is_not_deprecated_while_red_life_still_reads_it():
+    spec = registry.spec_for_flat_key("rclone")
+
+    assert spec.get("status") != "deprecated"

@@ -155,7 +155,11 @@ SPECS = [
         "category": "google-oauth",
         "type": "oauth_token",
         "lifetime": "access ~1h, refresh until revoked",
-        "description": "rclone Google Drive remote: OAuth token + root folder",
+        "description": (
+            "rclone Google Drive remote: OAuth token + root folder. Being replaced by google_drive; "
+            "still active because red-life/packages/core/src/teaching/drive.ts reads it. Do not mark "
+            "deprecated until that consumer migrates - compile would drop the key and break it."
+        ),
         "rotate": "evo cred refresh --service rclone (or rclone config reconnect)",
         "oauth": {
             "container": ["rclone", "token"],
@@ -189,13 +193,14 @@ SPECS = [
         "category": "google-oauth",
         "type": "oauth_token",
         "lifetime": "access ~1h, refresh until revoked",
-        "description": "Google Drive OAuth token (evo gdrive)",
-        "rotate": "evo cred refresh --service google-drive",
+        "description": "Google Drive OAuth token, project omelet-f0b89 (evo gdrive, life teach)",
+        "rotate": "evo cred refresh --service google-drive; first consent: evo cred auth --service google-drive",
         "oauth": {
             "container": ["google_drive", "token"],
             "access_field": "token",
             "expiry_field": "expiry",
             "client_from": ["google_drive", "token"],
+            "scopes": ["https://www.googleapis.com/auth/drive.readonly"],
         },
         "keys": ["google_drive"],
     },
@@ -322,7 +327,7 @@ SPECS = [
         "category": "firebase",
         "type": "service_account",
         "lifetime": "stable",
-        "description": "Firebase Admin SDK service account (project omelet-f0b89)",
+        "description": "Firebase Admin SDK service account (project fu-instructor)",
         "rotate": "Firebase console -> Service accounts -> generate new key",
         "keys": ["firebase_admin_sdk"],
     },

@@ -96,6 +96,7 @@ directly.
 evo cred doctor                       # health + expiry of every credential, exit 1 if any expired
 evo cred get openai_api_key           # print one value by dotted path, nothing else on stdout
 evo cred add openai_api_key           # prompt with no echo, write the folder file, recompile
+evo cred auth --service google-drive  # first-time OAuth consent, stores the refresh token
 evo cred refresh --all                # refresh Google OAuth access tokens
 evo cred compile                      # rebuild ~/.omelet.json from the folder
 evo cred sync push                    # push the folder to a private GitHub repo via gh
@@ -117,6 +118,16 @@ Configuration is env-driven, with no personal defaults baked in:
 
 `evo cred sync push` refuses to push to a repo whose visibility is not `PRIVATE`. Never echo a value
 into a shared terminal or a log; `doctor` and `list` only ever print a masked preview.
+
+`evo cred auth` performs the initial OAuth consent that `refresh` cannot: it starts a loopback server,
+opens the consent screen, and writes the resulting refresh token into the store. Create the OAuth
+client in the Cloud Console first (APIs & Services -> Credentials -> Create OAuth client ID ->
+**Desktop app**) and pass the downloaded JSON with `--client-secrets`; there is no gcloud equivalent
+for creating an OAuth client.
+
+`evo gdrive` reads its token from the `google_drive` entry through this store rather than parsing
+`~/.omelet.json` itself, so a refresh writes to the folder and recompiles instead of racing whatever
+else has the flat file open.
 
 #### Harness Repositories
 

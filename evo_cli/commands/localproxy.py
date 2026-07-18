@@ -32,7 +32,6 @@ from rich.text import Text
 
 from evo_cli.console import console, error, info, step, success, warning
 
-
 # ── Certificate authority / leaf generation ──────────────────────────────────
 
 def _cert_dir(custom=None):

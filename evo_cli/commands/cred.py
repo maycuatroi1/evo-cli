@@ -2,13 +2,15 @@ import getpass
 import json
 import os
 import sys
+import webbrowser
+from pathlib import Path
 
 import rich_click as click
 from rich.table import Table
 
 from evo_cli.console import console, info, success, warning
 from evo_cli.credentials import doctor as doctor_module
-from evo_cli.credentials import google_oauth, migrate, sync
+from evo_cli.credentials import google_oauth, migrate, oauth_flow, sync
 from evo_cli.credentials.registry import config_path, credentials_dir
 from evo_cli.credentials.store import (
     CredentialError,
@@ -197,6 +199,89 @@ def refresh(refresh_all, service, dry_run):
 
     if failures:
         raise click.exceptions.Exit(1)
+
+
+@cred_group.command("auth", help="Run the first-time Google OAuth consent flow and store the refresh token.")
+@click.option(
+    "--service",
+    required=True,
+    type=click.Choice(sorted(google_oauth.SERVICE_ALIASES)),
+    help="Which service to authorise.",
+)
+@click.option(
+    "--client-secrets",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="OAuth client JSON downloaded from the Cloud Console. Omit to reuse the stored client.",
+)
+@click.option("--scope", "scopes", multiple=True, help="Override the scopes. Repeat for several.")
+@click.option("--no-browser", is_flag=True, help="Print the URL instead of opening a browser.")
+def auth(service, client_secrets, scopes, no_browser):
+    target = google_oauth.SERVICE_ALIASES[service]
+    _guard(require_folder)
+
+    entries = _guard(google_oauth.select_entries, target)
+    if not entries:
+        raise click.ClickException(f"no oauth entry for '{service}' in the store")
+    path, entry = entries[0]
+
+    resolved_scopes = list(scopes) or (entry.get("oauth") or {}).get("scopes")
+    if not resolved_scopes:
+        raise click.ClickException(
+            f"no scopes known for '{service}'. Pass --scope, or add them to the oauth descriptor "
+            f"in evo_cli/credentials/registry.py."
+        )
+
+    if client_secrets:
+        client_id, client_secret = _guard(oauth_flow.client_from_secrets_file, client_secrets)
+    else:
+        client_id, client_secret = oauth_flow.client_from_entry(entry)
+    if not client_id or not client_secret:
+        raise click.ClickException(
+            "no OAuth client available. Create one in the Cloud Console "
+            "(APIs & Services -> Credentials -> OAuth client ID -> Desktop app), download the JSON, "
+            "and pass it with --client-secrets."
+        )
+
+    server, redirect_uri, thread = oauth_flow.capture_code()
+    state = oauth_flow.new_state()
+    url = oauth_flow.build_auth_url(client_id, redirect_uri, resolved_scopes, state)
+
+    info(f"scopes: {', '.join(resolved_scopes)}")
+    info(f"listening on {redirect_uri}")
+    if no_browser:
+        console.print(f"\nOpen this URL to authorise:\n\n{url}\n")
+    else:
+        console.print("\nOpening your browser to authorise. Approve the consent screen.\n")
+        webbrowser.open(url)
+
+    thread.start()
+    thread.join(timeout=300)
+    result = oauth_flow._Handler.result
+    server.server_close()
+
+    if result is None:
+        raise click.ClickException("timed out waiting for the consent redirect")
+    if result.get("error"):
+        raise click.ClickException(f"Google returned an error: {result['error']}")
+    if result.get("state") != state:
+        raise click.ClickException("state mismatch on the redirect; aborting rather than trusting it")
+
+    body = _guard(oauth_flow.exchange_code, client_id, client_secret, result["code"], redirect_uri)
+
+    oauth = entry.get("oauth") or {}
+    container_path = oauth.get("client_from") or oauth.get("container") or []
+    if container_path:
+        cursor = entry.setdefault("flat", {})
+        for part in container_path[:-1]:
+            cursor = cursor.setdefault(part, {})
+        leaf = cursor.setdefault(container_path[-1], {})
+        leaf["client_id"] = client_id
+        leaf["client_secret"] = client_secret
+
+    expiry = _guard(oauth_flow.store_tokens, path, entry, body, resolved_scopes)
+    count, _, target_path = _guard(compile_flat)
+    success(f"{target}: authorised, valid until {expiry}")
+    success(f"compiled {count} entries -> {target_path}")
 
 
 @cred_group.command("migrate", help="Split a flat omelet.json into the per-service credentials folder.")
