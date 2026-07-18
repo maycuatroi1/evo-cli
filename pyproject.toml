@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "cryptography>=41.0",
     "paramiko>=2.7.0",
+    "PyYAML>=6.0",
     "rich>=13.0",
     "rich-click>=1.8",
 ]

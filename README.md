@@ -85,3 +85,24 @@ Options:
 - `-y, --yes` - Skip the confirmation prompt
 - `-f, --force` - Apply the fix even if the version is not in the affected range
 - `--unpin` - Undo the fix: re-enable the auto-updater and install the latest build
+
+#### Harness Repositories
+
+Fast-forward every available repository declared in a harness manifest:
+
+```bash
+evo harness pull
+```
+
+Run the command from a harness directory or any registered member repository. Use `--harness PATH`
+when a repository belongs to multiple harnesses or the harness is not registered.
+
+```bash
+evo harness pull --harness ~/github/my-project-harness
+evo harness pull --repo backend --repo frontend
+evo harness pull --dry-run
+```
+
+The command reads `harness.yaml` and its optional `harness.local.yaml` overlay. Repositories marked
+`present: false` are skipped. Repositories with uncommitted changes are not modified, and every pull
+uses `git pull --ff-only` so the command never creates merge commits.

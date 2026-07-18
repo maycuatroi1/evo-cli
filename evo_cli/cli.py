@@ -7,6 +7,7 @@ from evo_cli.commands.download import download
 from evo_cli.commands.fix_claude import f_claude
 from evo_cli.commands.gdrive import gdrive
 from evo_cli.commands.gh import setup_gh
+from evo_cli.commands.harness import harness_group
 from evo_cli.commands.hwid import hwid
 from evo_cli.commands.hwid_reset import hwid_reset
 from evo_cli.commands.localproxy import localproxy
@@ -58,6 +59,7 @@ cli.add_command(cfssh)
 cli.add_command(download)
 cli.add_command(f_claude)
 cli.add_command(gdrive)
+cli.add_command(harness_group)
 cli.add_command(hwid)
 cli.add_command(hwid_reset)
 cli.add_command(site2s)
