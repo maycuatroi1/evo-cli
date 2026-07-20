@@ -28,10 +28,38 @@ BROWSERS = ["chrome", "edge", "firefox", "brave", "chromium", "opera", "vivaldi"
 JS_RUNTIMES = ["deno", "bun", "node"]
 
 DIRECT_EXTS = {
-    ".7z", ".apk", ".appimage", ".bin", ".bz2", ".csv", ".deb", ".dmg", ".doc", ".docx",
-    ".epub", ".exe", ".gz", ".img", ".iso", ".jar", ".json", ".msi", ".pdf", ".ppt",
-    ".pptx", ".rar", ".rpm", ".tar", ".tgz", ".txt", ".whl", ".xls", ".xlsx", ".xz",
-    ".zip", ".zst",
+    ".7z",
+    ".apk",
+    ".appimage",
+    ".bin",
+    ".bz2",
+    ".csv",
+    ".deb",
+    ".dmg",
+    ".doc",
+    ".docx",
+    ".epub",
+    ".exe",
+    ".gz",
+    ".img",
+    ".iso",
+    ".jar",
+    ".json",
+    ".msi",
+    ".pdf",
+    ".ppt",
+    ".pptx",
+    ".rar",
+    ".rpm",
+    ".tar",
+    ".tgz",
+    ".txt",
+    ".whl",
+    ".xls",
+    ".xlsx",
+    ".xz",
+    ".zip",
+    ".zst",
 }
 
 SITES = [
@@ -317,9 +345,7 @@ def do_get(urls, opts, assume_yes):
     has_ffmpeg = bool(find_ffmpeg())
     if not has_ffmpeg:
         if opts["audio_only"]:
-            raise click.ClickException(
-                "ffmpeg is required to extract audio. Run `evo download install --with-deps`."
-            )
+            raise click.ClickException("ffmpeg is required to extract audio. Run `evo download install --with-deps`.")
         warning("ffmpeg not found: falling back to single-file streams (lower quality).")
         info("Install it with `evo download install --with-deps` for the best quality.")
 
@@ -361,37 +387,65 @@ def download():
 
 def get_options(func):
     options = [
-        click.option("-o", "--output", "outdir", type=click.Path(file_okay=False),
-                     default=None, help="Output folder. Default: `~/Downloads` (or `$EVO_DOWNLOAD_DIR`)."),
-        click.option("-q", "--quality", type=click.Choice(QUALITIES), default="best",
-                     show_default=True, help="Cap the video resolution."),
-        click.option("-c", "--container", type=click.Choice(CONTAINERS), default="mp4",
-                     show_default=True, help="Container to merge into. `auto` keeps whatever the site serves."),
+        click.option(
+            "-o",
+            "--output",
+            "outdir",
+            type=click.Path(file_okay=False),
+            default=None,
+            help="Output folder. Default: `~/Downloads` (or `$EVO_DOWNLOAD_DIR`).",
+        ),
+        click.option(
+            "-q",
+            "--quality",
+            type=click.Choice(QUALITIES),
+            default="best",
+            show_default=True,
+            help="Cap the video resolution.",
+        ),
+        click.option(
+            "-c",
+            "--container",
+            type=click.Choice(CONTAINERS),
+            default="mp4",
+            show_default=True,
+            help="Container to merge into. `auto` keeps whatever the site serves.",
+        ),
         click.option("-a", "--audio-only", is_flag=True, help="Grab the audio track only."),
-        click.option("--audio-format", type=click.Choice(AUDIO_FORMATS), default="mp3",
-                     show_default=True, help="Audio codec to convert to with `-a`."),
-        click.option("-f", "--format", "fmt", default=None,
-                     help="Raw yt-dlp format selector, overrides `-q` / `-a`."),
-        click.option("-p", "--playlist", is_flag=True,
-                     help="Download the whole playlist / channel, not just the one video."),
-        click.option("-s", "--subs", default=None, metavar="LANGS",
-                     help="Download and embed subtitles, e.g. `en,vi` or `all`."),
+        click.option(
+            "--audio-format",
+            type=click.Choice(AUDIO_FORMATS),
+            default="mp3",
+            show_default=True,
+            help="Audio codec to convert to with `-a`.",
+        ),
+        click.option("-f", "--format", "fmt", default=None, help="Raw yt-dlp format selector, overrides `-q` / `-a`."),
+        click.option(
+            "-p", "--playlist", is_flag=True, help="Download the whole playlist / channel, not just the one video."
+        ),
+        click.option(
+            "-s", "--subs", default=None, metavar="LANGS", help="Download and embed subtitles, e.g. `en,vi` or `all`."
+        ),
         click.option("--thumbnail", is_flag=True, help="Embed the thumbnail as cover art."),
         click.option("--sponsorblock", is_flag=True, help="Cut sponsor segments out (YouTube)."),
-        click.option("--cookies", type=click.Choice(BROWSERS), default=None,
-                     help="Load cookies from a browser for private / age-gated / member-only media."),
-        click.option("--archive", is_flag=True,
-                     help="Record what was downloaded and skip it next time."),
-        click.option("--section", default=None, metavar="RANGE",
-                     help="Download only a time range, e.g. `10:00-15:00`."),
-        click.option("--ascii", "ascii_names", is_flag=True,
-                     help="Restrict filenames to ASCII (no spaces or diacritics)."),
-        click.option("-N", "--concurrent", type=int, default=4, show_default=True,
-                     help="Fragments to download in parallel."),
-        click.option("-r", "--limit-rate", default=None, metavar="RATE",
-                     help="Cap the download speed, e.g. `2M`."),
-        click.option("--name", default=None, metavar="TEMPLATE",
-                     help="yt-dlp output template, e.g. `%(id)s.%(ext)s`."),
+        click.option(
+            "--cookies",
+            type=click.Choice(BROWSERS),
+            default=None,
+            help="Load cookies from a browser for private / age-gated / member-only media.",
+        ),
+        click.option("--archive", is_flag=True, help="Record what was downloaded and skip it next time."),
+        click.option(
+            "--section", default=None, metavar="RANGE", help="Download only a time range, e.g. `10:00-15:00`."
+        ),
+        click.option(
+            "--ascii", "ascii_names", is_flag=True, help="Restrict filenames to ASCII (no spaces or diacritics)."
+        ),
+        click.option(
+            "-N", "--concurrent", type=int, default=4, show_default=True, help="Fragments to download in parallel."
+        ),
+        click.option("-r", "--limit-rate", default=None, metavar="RATE", help="Cap the download speed, e.g. `2M`."),
+        click.option("--name", default=None, metavar="TEMPLATE", help="yt-dlp output template, e.g. `%(id)s.%(ext)s`."),
         click.option("-y", "--yes", "assume_yes", is_flag=True, help="Assume yes for install prompts."),
         click.option("--dry-run", is_flag=True, help="Print the yt-dlp command instead of running it."),
     ]
@@ -400,9 +454,27 @@ def get_options(func):
     return func
 
 
-def collect_opts(outdir, quality, container, audio_only, audio_format, fmt, playlist, subs,
-                 thumbnail, sponsorblock, cookies, archive, section, ascii_names, concurrent,
-                 limit_rate, name, dry_run, list_formats=False):
+def collect_opts(
+    outdir,
+    quality,
+    container,
+    audio_only,
+    audio_format,
+    fmt,
+    playlist,
+    subs,
+    thumbnail,
+    sponsorblock,
+    cookies,
+    archive,
+    section,
+    ascii_names,
+    concurrent,
+    limit_rate,
+    name,
+    dry_run,
+    list_formats=False,
+):
     return {
         "outdir": Path(outdir) if outdir else default_output_dir(),
         "quality": quality,
@@ -439,13 +511,49 @@ def collect_opts(outdir, quality, container, audio_only, audio_format, fmt, play
 )
 @click.argument("urls", nargs=-1, required=True, metavar="URLS...")
 @get_options
-def get_cmd(urls, outdir, quality, container, audio_only, audio_format, fmt, playlist, subs,
-            thumbnail, sponsorblock, cookies, archive, section, ascii_names, concurrent,
-            limit_rate, name, assume_yes, dry_run):
+def get_cmd(
+    urls,
+    outdir,
+    quality,
+    container,
+    audio_only,
+    audio_format,
+    fmt,
+    playlist,
+    subs,
+    thumbnail,
+    sponsorblock,
+    cookies,
+    archive,
+    section,
+    ascii_names,
+    concurrent,
+    limit_rate,
+    name,
+    assume_yes,
+    dry_run,
+):
     step("evo download")
-    opts = collect_opts(outdir, quality, container, audio_only, audio_format, fmt, playlist,
-                        subs, thumbnail, sponsorblock, cookies, archive, section, ascii_names,
-                        concurrent, limit_rate, name, dry_run)
+    opts = collect_opts(
+        outdir,
+        quality,
+        container,
+        audio_only,
+        audio_format,
+        fmt,
+        playlist,
+        subs,
+        thumbnail,
+        sponsorblock,
+        cookies,
+        archive,
+        section,
+        ascii_names,
+        concurrent,
+        limit_rate,
+        name,
+        dry_run,
+    )
     do_get(list(urls), opts, assume_yes)
 
 
@@ -456,18 +564,47 @@ def get_cmd(urls, outdir, quality, container, audio_only, audio_format, fmt, pla
     help="Download `URLS` as audio only. Shortcut for `evo download get -a`.",
 )
 @click.argument("urls", nargs=-1, required=True, metavar="URLS...")
-@click.option("-o", "--output", "outdir", type=click.Path(file_okay=False), default=None,
-              help="Output folder. Default: `~/Downloads`.")
-@click.option("--audio-format", type=click.Choice(AUDIO_FORMATS), default="mp3",
-              show_default=True, help="Audio codec to convert to.")
+@click.option(
+    "-o",
+    "--output",
+    "outdir",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Output folder. Default: `~/Downloads`.",
+)
+@click.option(
+    "--audio-format",
+    type=click.Choice(AUDIO_FORMATS),
+    default="mp3",
+    show_default=True,
+    help="Audio codec to convert to.",
+)
 @click.option("-p", "--playlist", is_flag=True, help="Download the whole playlist.")
 @click.option("--thumbnail", is_flag=True, help="Embed the thumbnail as cover art.")
 @click.option("--cookies", type=click.Choice(BROWSERS), default=None, help="Load cookies from a browser.")
 @click.option("-y", "--yes", "assume_yes", is_flag=True, help="Assume yes for install prompts.")
 def audio_cmd(urls, outdir, audio_format, playlist, thumbnail, cookies, assume_yes):
     step("evo download audio")
-    opts = collect_opts(outdir, "best", "auto", True, audio_format, None, playlist, None,
-                        thumbnail, False, cookies, False, None, False, 4, None, None, False)
+    opts = collect_opts(
+        outdir,
+        "best",
+        "auto",
+        True,
+        audio_format,
+        None,
+        playlist,
+        None,
+        thumbnail,
+        False,
+        cookies,
+        False,
+        None,
+        False,
+        4,
+        None,
+        None,
+        False,
+    )
     do_get(list(urls), opts, assume_yes)
 
 
@@ -481,8 +618,27 @@ def audio_cmd(urls, outdir, audio_format, playlist, thumbnail, cookies, assume_y
 @click.option("-y", "--yes", "assume_yes", is_flag=True, help="Assume yes for install prompts.")
 def formats_cmd(url, cookies, assume_yes):
     step("evo download formats")
-    opts = collect_opts(None, "best", "auto", False, "mp3", None, False, None, False, False,
-                        cookies, False, None, False, 4, None, None, False, list_formats=True)
+    opts = collect_opts(
+        None,
+        "best",
+        "auto",
+        False,
+        "mp3",
+        None,
+        False,
+        None,
+        False,
+        False,
+        cookies,
+        False,
+        None,
+        False,
+        4,
+        None,
+        None,
+        False,
+        list_formats=True,
+    )
     do_get([url], opts, assume_yes)
 
 

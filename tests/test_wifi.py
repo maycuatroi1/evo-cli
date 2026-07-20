@@ -117,8 +117,11 @@ def test_macos_scan_parses_profiler(monkeypatch):
             "spairport_network_channel": "149 (5GHz, 80MHz)",
         },
         "spairport_airport_other_local_wireless_networks": [
-            {"_name": "Cafe", "spairport_security_mode": "spairport_security_mode_none",
-             "spairport_network_channel": "11 (2GHz, 20MHz)"},
+            {
+                "_name": "Cafe",
+                "spairport_security_mode": "spairport_security_mode_none",
+                "spairport_network_channel": "11 (2GHz, 20MHz)",
+            },
             {"_name": "HomeWifi"},  # duplicate of the current network, must be deduped
         ],
     }
@@ -146,7 +149,8 @@ def test_status_notes_radio_off():
 def test_status_json_runs(monkeypatch):
     monkeypatch.setattr(wifi, "prepare", lambda: ("Darwin", "en0"))
     monkeypatch.setattr(
-        wifi, "collect_status",
+        wifi,
+        "collect_status",
         lambda iface: {"interface": "en0", "power": True, "connected": True, "ssid": "Home", "rssi": -50},
     )
     result = CliRunner().invoke(cli, ["wifi", "status", "--json"])

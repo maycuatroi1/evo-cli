@@ -20,10 +20,24 @@ def no_network(monkeypatch):
 @pytest.fixture
 def opts(tmp_path):
     return dl.collect_opts(
-        outdir=str(tmp_path), quality="best", container="mp4", audio_only=False,
-        audio_format="mp3", fmt=None, playlist=False, subs=None, thumbnail=False,
-        sponsorblock=False, cookies=None, archive=False, section=None, ascii_names=False,
-        concurrent=4, limit_rate=None, name=None, dry_run=False,
+        outdir=str(tmp_path),
+        quality="best",
+        container="mp4",
+        audio_only=False,
+        audio_format="mp3",
+        fmt=None,
+        playlist=False,
+        subs=None,
+        thumbnail=False,
+        sponsorblock=False,
+        cookies=None,
+        archive=False,
+        section=None,
+        ascii_names=False,
+        concurrent=4,
+        limit_rate=None,
+        name=None,
+        dry_run=False,
     )
 
 
@@ -103,9 +117,18 @@ def test_build_args_raw_format_wins(opts):
 
 
 def test_build_args_extras(opts):
-    opts.update({"subs": "en,vi", "thumbnail": True, "sponsorblock": True,
-                 "cookies": "chrome", "section": "10:00-15:00", "ascii_names": True,
-                 "archive": True, "limit_rate": "2M"})
+    opts.update(
+        {
+            "subs": "en,vi",
+            "thumbnail": True,
+            "sponsorblock": True,
+            "cookies": "chrome",
+            "section": "10:00-15:00",
+            "ascii_names": True,
+            "archive": True,
+            "limit_rate": "2M",
+        }
+    )
     args = dl.build_ytdlp_args(opts, has_ffmpeg=True)
     assert args[args.index("--sub-langs") + 1] == "en,vi"
     assert "--embed-subs" in args
@@ -170,9 +193,7 @@ def test_dry_run_builds_command(monkeypatch, tmp_path):
 def test_dry_run_echo_keeps_brackets(monkeypatch, tmp_path):
     monkeypatch.setattr(dl, "ensure_ytdlp", lambda assume_yes=False: ["yt-dlp"])
     monkeypatch.setattr(dl, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
-    result = CliRunner().invoke(
-        cli, ["download", YOUTUBE, "-q", "720p", "-o", str(tmp_path), "--dry-run"]
-    )
+    result = CliRunner().invoke(cli, ["download", YOUTUBE, "-q", "720p", "-o", str(tmp_path), "--dry-run"])
     assert result.exit_code == 0
     assert "[height<=720]" in result.output.replace("\n", "")
 

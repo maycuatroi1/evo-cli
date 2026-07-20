@@ -148,8 +148,10 @@ def download_image(url, dest_path, token=None):
 
 
 def fetch_file_metadata(file_id, token):
-    url = DRIVE_FILE_API.format(file_id=file_id) + "?" + urllib.parse.urlencode(
-        {"fields": "id,name,mimeType,modifiedTime"}
+    url = (
+        DRIVE_FILE_API.format(file_id=file_id)
+        + "?"
+        + urllib.parse.urlencode({"fields": "id,name,mimeType,modifiedTime"})
     )
     body, _ = http_get(url, token=token)
     return json.loads(body.decode("utf-8"))
@@ -275,9 +277,7 @@ def render_table(table, inline_objects, list_props_by_id, image_resolver):
             for element in cell.get("content") or []:
                 if "paragraph" in element:
                     cell_parts.append(
-                        render_paragraph(
-                            element["paragraph"], inline_objects, list_props_by_id, image_resolver
-                        ).strip()
+                        render_paragraph(element["paragraph"], inline_objects, list_props_by_id, image_resolver).strip()
                     )
             rendered_cells.append(" ".join(p for p in cell_parts if p).replace("|", "\\|"))
         rendered_rows.append("| " + " | ".join(rendered_cells) + " |")
@@ -292,9 +292,7 @@ def document_to_markdown(document, image_resolver):
     body = document.get("body") or {}
     content = body.get("content") or []
     inline_objects = document.get("inlineObjects") or {}
-    list_props_by_id = {
-        lid: lst.get("listProperties") or {} for lid, lst in (document.get("lists") or {}).items()
-    }
+    list_props_by_id = {lid: lst.get("listProperties") or {} for lid, lst in (document.get("lists") or {}).items()}
     title = document.get("title") or "Document"
     out_parts = [f"# {title}\n"]
     for element in content:
@@ -425,9 +423,7 @@ def run_doc_read(target, out_dir, no_images, raw, via_docs_api):
         info(f"Title: [accent]{title}[/accent]")
         info(f"Output: [accent]{target_dir}[/accent]")
         if raw:
-            (target_dir / "raw.json").write_text(
-                json.dumps(document, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            (target_dir / "raw.json").write_text(json.dumps(document, indent=2, ensure_ascii=False), encoding="utf-8")
             info(f"Wrote raw API response to [accent]{target_dir / 'raw.json'}[/accent]")
         resolver = build_image_resolver(document.get("inlineObjects") or {}, target_dir, no_images)
         markdown = document_to_markdown(document, resolver)

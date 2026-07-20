@@ -347,10 +347,7 @@ def run(hosts, count, timeout, want_speed, as_json):
             warning(f"Speed test failed: {speed['error']}")
         else:
             mb = speed["bytes"] / 1e6
-            success(
-                f"Throughput: [accent]{speed['mbps']:.0f} Mbps[/accent] "
-                f"({mb:.0f}MB in {speed['seconds']:.1f}s)"
-            )
+            success(f"Throughput: [accent]{speed['mbps']:.0f} Mbps[/accent] ({mb:.0f}MB in {speed['seconds']:.1f}s)")
 
     notes = build_notes(rows, ipv6)
     step("Verdict")

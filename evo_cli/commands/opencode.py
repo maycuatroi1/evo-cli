@@ -370,10 +370,7 @@ def enable_exa_websearch():
         return
 
     rc_path.parent.mkdir(parents=True, exist_ok=True)
-    block = (
-        "\n# opencode web search (Exa native, no API key) - added by evo setup opencode\n"
-        f"export {EXA_ENV_VAR}=1\n"
-    )
+    block = f"\n# opencode web search (Exa native, no API key) - added by evo setup opencode\nexport {EXA_ENV_VAR}=1\n"
     with rc_path.open("a", encoding="utf-8") as fh:
         fh.write(block)
     success(f"Enabled Exa web search in [accent]{rc_path}[/accent]")

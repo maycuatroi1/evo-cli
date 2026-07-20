@@ -1,3 +1,4 @@
+import sys
 import tarfile
 import zipfile
 
@@ -165,7 +166,8 @@ def test_extract_gh_binary_from_tarball(tmp_path):
     destination.parent.mkdir()
     assert extract_gh_binary(archive, destination) is True
     assert destination.read_bytes() == b"#!/bin/sh\necho gh\n"
-    assert destination.stat().st_mode & 0o111  # executable
+    if sys.platform != "win32":
+        assert destination.stat().st_mode & 0o111  # executable
 
 
 def test_extract_gh_binary_from_zip(tmp_path):

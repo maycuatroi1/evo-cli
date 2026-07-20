@@ -17,6 +17,7 @@ Backends, picked automatically:
 Every call degrades gracefully: a missing tool or permission is reported, never
 crashes.
 """
+
 import json as jsonlib
 import os
 import platform
@@ -68,9 +69,7 @@ EPILOG = Text.from_markup(
 def _run(cmd, timeout=20, input_text=None, capture=True):
     """Run a command; return the CompletedProcess, or None if it could not start."""
     try:
-        return subprocess.run(
-            cmd, capture_output=capture, text=True, timeout=timeout, input=input_text
-        )
+        return subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout, input=input_text)
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -289,7 +288,9 @@ def macos_status(iface):
     current = (prof or {}).get("spairport_current_network_information")
     if current:
         entry = _macos_network_entry(current, connected=True)
-        state.update(connected=True, **{k: entry[k] for k in ("ssid", "rssi", "security", "channel", "band", "phymode", "rate")})
+        state.update(
+            connected=True, **{k: entry[k] for k in ("ssid", "rssi", "security", "channel", "band", "phymode", "rate")}
+        )
     if state["connected"]:
         ip = _stdout(["ipconfig", "getifaddr", iface])
         state["ip"] = ip.strip() if ip else None
@@ -373,17 +374,19 @@ def linux_scan(iface):
         if ssid in seen:
             continue
         seen.add(ssid)
-        networks.append({
-            "ssid": ssid,
-            "rssi": None,
-            "signal": int(parts[2]) if parts[2].isdigit() else None,
-            "security": parts[3] or "Open",
-            "channel": parts[4],
-            "band": None,
-            "phymode": None,
-            "rate": None,
-            "connected": parts[0].strip() == "*",
-        })
+        networks.append(
+            {
+                "ssid": ssid,
+                "rssi": None,
+                "signal": int(parts[2]) if parts[2].isdigit() else None,
+                "security": parts[3] or "Open",
+                "channel": parts[4],
+                "band": None,
+                "phymode": None,
+                "rate": None,
+                "connected": parts[0].strip() == "*",
+            }
+        )
     return sort_networks(networks)
 
 
@@ -399,6 +402,7 @@ def linux_saved(iface):
 
 def sort_networks(networks):
     """Strongest signal first; networks without a reading sink to the bottom."""
+
     def key(entry):
         value = entry.get("rssi")
         if value is None:
@@ -581,7 +585,9 @@ def render_status(state):
             band = f" - {state['band']}" if state.get("band") else ""
             table.add_row("Channel", f"{state['channel']}{band}")
         if state.get("rate"):
-            table.add_row("Tx rate", f"{state['rate']} Mbps" if isinstance(state["rate"], (int, float)) else str(state["rate"]))
+            table.add_row(
+                "Tx rate", f"{state['rate']} Mbps" if isinstance(state["rate"], (int, float)) else str(state["rate"])
+            )
         if state.get("phymode"):
             table.add_row("PHY mode", state["phymode"])
         if state.get("ip"):

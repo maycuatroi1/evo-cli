@@ -17,6 +17,7 @@ HTTP/1.1 end to end (ALPN pins http/1.1); chunked, keep-alive, Expect:
 100-continue and WebSocket upgrades are handled. Response bodies are streamed
 untouched, so gzip/br pass through transparently.
 """
+
 import datetime
 import os
 import re
@@ -33,6 +34,7 @@ from rich.text import Text
 from evo_cli.console import console, error, info, step, success, warning
 
 # ── Certificate authority / leaf generation ──────────────────────────────────
+
 
 def _cert_dir(custom=None):
     p = Path(custom) if custom else Path.home() / ".evo" / "proxy-certs"
@@ -54,14 +56,17 @@ def _load_or_create_ca(cert_dir):
         return key, crt, crt_path
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "Evo Local CA"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Evo CLI"),
-    ])
+    name = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, "Evo Local CA"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Evo CLI"),
+        ]
+    )
     now = datetime.datetime.now(datetime.timezone.utc)
     crt = (
         x509.CertificateBuilder()
-        .subject_name(name).issuer_name(name)
+        .subject_name(name)
+        .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - datetime.timedelta(days=1))
@@ -69,21 +74,28 @@ def _load_or_create_ca(cert_dir):
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.KeyUsage(
-                digital_signature=True, key_cert_sign=True, crl_sign=True,
-                content_commitment=False, key_encipherment=False,
-                data_encipherment=False, key_agreement=False,
-                encipher_only=False, decipher_only=False,
+                digital_signature=True,
+                key_cert_sign=True,
+                crl_sign=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                encipher_only=False,
+                decipher_only=False,
             ),
             critical=True,
         )
         .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
         .sign(key, hashes.SHA256())
     )
-    key_path.write_bytes(key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.TraditionalOpenSSL,
-        serialization.NoEncryption(),
-    ))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
     crt_path.write_bytes(crt.public_bytes(serialization.Encoding.PEM))
     return key, crt, crt_path
 
@@ -111,14 +123,15 @@ def _make_leaf(cert_dir, ca_key, ca_crt, dns_names):
     )
     key_path = cert_dir / "leaf-key.pem"
     chain_path = cert_dir / "leaf-chain.pem"
-    key_path.write_bytes(key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.TraditionalOpenSSL,
-        serialization.NoEncryption(),
-    ))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
     chain_path.write_bytes(
-        crt.public_bytes(serialization.Encoding.PEM)
-        + ca_crt.public_bytes(serialization.Encoding.PEM)
+        crt.public_bytes(serialization.Encoding.PEM) + ca_crt.public_bytes(serialization.Encoding.PEM)
     )
     return chain_path, key_path
 
@@ -149,6 +162,7 @@ def _flush_dns():
     if os.name == "nt":
         try:
             import subprocess
+
             subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
         except Exception:
             pass
@@ -160,8 +174,7 @@ def _setup_hosts(local_hosts):
     try:
         content = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
         kept = [
-            ln for ln in content.splitlines()
-            if _MARKER not in ln and not any(h in ln.split() for h in local_hosts)
+            ln for ln in content.splitlines() if _MARKER not in ln and not any(h in ln.split() for h in local_hosts)
         ]
         path.write_text("\n".join(kept + entries) + "\n", encoding="utf-8")
         success(f"Updated hosts file ({len(local_hosts)} entries)")
@@ -180,8 +193,7 @@ def _cleanup_hosts():
     try:
         if not path.exists():
             return
-        kept = [ln for ln in path.read_text(encoding="utf-8", errors="ignore").splitlines()
-                if _MARKER not in ln]
+        kept = [ln for ln in path.read_text(encoding="utf-8", errors="ignore").splitlines() if _MARKER not in ln]
         path.write_text("\n".join(kept) + "\n", encoding="utf-8")
         _flush_dns()
         warning("Removed hosts entries.")
@@ -192,13 +204,16 @@ def _cleanup_hosts():
 def _install_ca(ca_crt_path):
     if os.name == "nt":
         import subprocess
+
         info("Installing CA into the Windows user Root store...")
-        r = subprocess.run(["certutil", "-addstore", "-user", "-f", "Root", str(ca_crt_path)],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            ["certutil", "-addstore", "-user", "-f", "Root", str(ca_crt_path)], capture_output=True, text=True
+        )
         if r.returncode == 0:
             success("CA trusted (Chrome / Edge will accept .local certs)")
-            console.print("[cmd]Firefox: set security.enterprise_roots.enabled=true, "
-                          "or import the CA in its own store.[/cmd]")
+            console.print(
+                "[cmd]Firefox: set security.enterprise_roots.enabled=true, or import the CA in its own store.[/cmd]"
+            )
         else:
             error(f"certutil failed: {r.stdout.strip()} {r.stderr.strip()}")
             console.print(f'[cmd]Install manually: certutil -addstore -user -f Root "{ca_crt_path}"[/cmd]')
@@ -207,6 +222,7 @@ def _install_ca(ca_crt_path):
 
 
 # ── HTTP/1.1 message helpers ─────────────────────────────────────────────────
+
 
 def _parse_headers(raw_lines):
     """raw_lines: list of header line bytes (CRLF-terminated). -> [[name, value], ...]"""
@@ -293,6 +309,7 @@ def _rewrite_cookie_domain(value):
         if dom.lower().endswith(b".local"):
             return m.group(0)
         return m.group(1) + dom + b".local"
+
     return _COOKIE_DOMAIN_RE.sub(repl, value)
 
 
@@ -304,13 +321,17 @@ def _safe_close(sock):
 
 
 def _send_simple(sock, code, msg):
-    reason = {403: b"Forbidden", 421: b"Misdirected Request",
-              502: b"Bad Gateway", 404: b"Not Found"}.get(code, b"Error")
+    reason = {403: b"Forbidden", 421: b"Misdirected Request", 502: b"Bad Gateway", 404: b"Not Found"}.get(
+        code, b"Error"
+    )
     body = msg + b"\n"
-    resp = (b"HTTP/1.1 %d %s\r\n" % (code, reason)
-            + b"Content-Type: text/plain; charset=utf-8\r\n"
-            + b"Content-Length: %d\r\n" % len(body)
-            + b"Connection: close\r\n\r\n" + body)
+    resp = (
+        b"HTTP/1.1 %d %s\r\n" % (code, reason)
+        + b"Content-Type: text/plain; charset=utf-8\r\n"
+        + b"Content-Length: %d\r\n" % len(body)
+        + b"Connection: close\r\n\r\n"
+        + body
+    )
     try:
         sock.sendall(resp)
     except OSError:
@@ -318,6 +339,7 @@ def _send_simple(sock, code, msg):
 
 
 # ── Body relaying ────────────────────────────────────────────────────────────
+
 
 def _relay_n(reader, out_sock, n):
     remaining = n
@@ -383,9 +405,11 @@ def _transfer_body(reader, out_sock, parsed, is_request, method=b"GET", status=N
 
 # ── Reverse proxy ────────────────────────────────────────────────────────────
 
+
 class LocalReverseProxy:
-    def __init__(self, domains, listen_port=443, upstream_port=443,
-                 bind="127.0.0.1", insecure_upstream=False, timeout=30):
+    def __init__(
+        self, domains, listen_port=443, upstream_port=443, bind="127.0.0.1", insecure_upstream=False, timeout=30
+    ):
         self.domains = domains
         self.listen_port = listen_port
         self.upstream_port = upstream_port
@@ -431,8 +455,7 @@ class LocalReverseProxy:
             nv = v
             for local, real in self.local_to_real.items():
                 # real -> local, but skip values already ending in .local
-                nv = re.sub(re.escape(real).encode() + rb"(?!\.local)",
-                            lambda m, _l=local: _l.encode(), nv)
+                nv = re.sub(re.escape(real).encode() + rb"(?!\.local)", lambda m, _l=local: _l.encode(), nv)
             if nv != v:
                 _hset(parsed, hdr, nv)
         for pair in parsed:
@@ -464,10 +487,13 @@ class LocalReverseProxy:
                     dst.shutdown(socket.SHUT_WR)
                 except OSError:
                     pass
+
         t1 = threading.Thread(target=pipe, args=(creader, usock), daemon=True)
         t2 = threading.Thread(target=pipe, args=(ureader, tls), daemon=True)
-        t1.start(); t2.start()
-        t1.join(); t2.join()
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
 
     def _handle(self, raw_conn, addr):
         try:
@@ -539,8 +565,7 @@ class LocalReverseProxy:
                     self._relay_upgrade(tls, creader, usock, ureader)
                     break
 
-                close_delimited = _transfer_body(
-                    ureader, tls, rparsed, is_request=False, method=method, status=status)
+                close_delimited = _transfer_body(ureader, tls, rparsed, is_request=False, method=method, status=status)
 
                 if _conn_close(rparsed) or close_delimited:
                     upstream[3] = False
@@ -584,8 +609,7 @@ EPILOG = Text.from_markup(
 )
 
 
-def run_localproxy(domains, port, bind, no_hosts, cert_dir,
-                   install_ca, insecure_upstream, upstream_port):
+def run_localproxy(domains, port, bind, no_hosts, cert_dir, install_ca, insecure_upstream, upstream_port):
     norm = []
     for d in domains:
         d = re.sub(r"^https?://", "", d.strip().lower()).split("/")[0].split(":")[0]
@@ -622,17 +646,20 @@ def run_localproxy(domains, port, bind, no_hosts, cert_dir,
     if not install_ca:
         console.print("[cmd]Trust the CA once so browsers don't warn:[/cmd]")
         if os.name == "nt":
-            console.print(f'[cmd]  certutil -addstore -user -f Root "{ca_crt_path}"   '
-                          "(or re-run with --install-ca)[/cmd]")
+            console.print(
+                f'[cmd]  certutil -addstore -user -f Root "{ca_crt_path}"   (or re-run with --install-ca)[/cmd]'
+            )
         else:
             console.print(f"[cmd]  import {ca_crt_path} into your trust store[/cmd]")
     info(f"Listening on {bind}:{port} — Ctrl+C to stop.")
 
-    proxy = LocalReverseProxy(norm, listen_port=port, upstream_port=upstream_port,
-                              bind=bind, insecure_upstream=insecure_upstream)
+    proxy = LocalReverseProxy(
+        norm, listen_port=port, upstream_port=upstream_port, bind=bind, insecure_upstream=insecure_upstream
+    )
 
     def _shutdown(_sig, _frame):
         proxy.running = False
+
     try:
         signal.signal(signal.SIGINT, _shutdown)
         signal.signal(signal.SIGTERM, _shutdown)
@@ -644,8 +671,7 @@ def run_localproxy(domains, port, bind, no_hosts, cert_dir,
     except OSError as exc:
         error(f"Cannot bind {bind}:{port} — {exc}")
         if port == 443:
-            warning("Port 443 is likely in use. Try `-p 8443` and browse "
-                    "https://{domain}.local:8443")
+            warning("Port 443 is likely in use. Try `-p 8443` and browse https://{domain}.local:8443")
     except KeyboardInterrupt:
         pass
     finally:
@@ -658,8 +684,9 @@ def run_localproxy(domains, port, bind, no_hosts, cert_dir,
 @click.command("localproxy", epilog=EPILOG)
 @click.argument("domains", nargs=-1, required=True)
 @click.option("-p", "--port", type=int, default=443, show_default=True, help="Local HTTPS listen port.")
-@click.option("-u", "--upstream-port", type=int, default=443, show_default=True,
-              help="Upstream HTTPS port to forward to.")
+@click.option(
+    "-u", "--upstream-port", type=int, default=443, show_default=True, help="Upstream HTTPS port to forward to."
+)
 @click.option("-b", "--bind", default="127.0.0.1", show_default=True, help="Bind address.")
 @click.option("--no-hosts", is_flag=True, help="Don't modify the hosts file.")
 @click.option("--cert-dir", type=click.Path(), default=None, help="Where to store the local CA / leaf certs.")

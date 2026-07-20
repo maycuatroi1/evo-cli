@@ -8,6 +8,7 @@ A self-contained PlantUML toolbox: it downloads the official plantuml.jar
 When Graphviz is missing, rendering falls back to PlantUML's pure-Java
 Smetana layout engine so most diagrams still work with Java alone.
 """
+
 import json as jsonlib
 import os
 import platform
@@ -31,23 +32,52 @@ from evo_cli.console import console, download_file, error, info, step, success, 
 GITHUB_LATEST = "https://api.github.com/repos/plantuml/plantuml/releases/latest"
 GITHUB_TAG = "https://api.github.com/repos/plantuml/plantuml/releases/tags/{tag}"
 FALLBACK_VERSION = "1.2026.6"
-FALLBACK_URL = (
-    "https://github.com/plantuml/plantuml/releases/download/"
-    "v{ver}/plantuml-{ver}.jar"
-)
+FALLBACK_URL = "https://github.com/plantuml/plantuml/releases/download/v{ver}/plantuml-{ver}.jar"
 
 FORMATS = ["png", "svg", "pdf", "txt", "eps", "vdx", "latex"]
 
 THEMES = [
-    "amiga", "aws-orange", "black-knight", "bluegray", "blueprint", "carbon-gray",
-    "cerulean", "cerulean-outline", "crt-amber", "crt-green", "cyborg",
-    "cyborg-outline", "hacker", "lightgray", "mars", "materia", "materia-outline",
-    "metal", "mimeograph", "minty", "mono", "plain", "reddress-darkblue",
-    "reddress-darkgreen", "reddress-darkorange", "reddress-darkred",
-    "reddress-lightblue", "reddress-lightgreen", "reddress-lightorange",
-    "reddress-lightred", "sandstone", "silver", "sketchy", "sketchy-outline",
-    "spacelab", "spacelab-white", "superhero", "superhero-outline", "toy",
-    "united", "vibrant",
+    "amiga",
+    "aws-orange",
+    "black-knight",
+    "bluegray",
+    "blueprint",
+    "carbon-gray",
+    "cerulean",
+    "cerulean-outline",
+    "crt-amber",
+    "crt-green",
+    "cyborg",
+    "cyborg-outline",
+    "hacker",
+    "lightgray",
+    "mars",
+    "materia",
+    "materia-outline",
+    "metal",
+    "mimeograph",
+    "minty",
+    "mono",
+    "plain",
+    "reddress-darkblue",
+    "reddress-darkgreen",
+    "reddress-darkorange",
+    "reddress-darkred",
+    "reddress-lightblue",
+    "reddress-lightgreen",
+    "reddress-lightorange",
+    "reddress-lightred",
+    "sandstone",
+    "silver",
+    "sketchy",
+    "sketchy-outline",
+    "spacelab",
+    "spacelab-white",
+    "superhero",
+    "superhero-outline",
+    "toy",
+    "united",
+    "vibrant",
 ]
 
 EPILOG = Text.from_markup(
@@ -170,12 +200,26 @@ def install_packages(packages, assume_yes):
     sudo = [] if (os.name == "nt" or mgr == "brew" or os.geteuid() == 0) else ["sudo"]
     yes = ["-y"] if assume_yes else []
     pkgmap = {
-        "java": {"apt-get": "default-jre", "dnf": "java-latest-openjdk", "yum": "java-latest-openjdk",
-                 "pacman": "jre-openjdk", "zypper": "java-openjdk", "brew": "openjdk",
-                 "winget": "EclipseAdoptium.Temurin.21.JRE", "choco": "temurin"},
-        "graphviz": {"apt-get": "graphviz", "dnf": "graphviz", "yum": "graphviz",
-                     "pacman": "graphviz", "zypper": "graphviz", "brew": "graphviz",
-                     "winget": "Graphviz.Graphviz", "choco": "graphviz"},
+        "java": {
+            "apt-get": "default-jre",
+            "dnf": "java-latest-openjdk",
+            "yum": "java-latest-openjdk",
+            "pacman": "jre-openjdk",
+            "zypper": "java-openjdk",
+            "brew": "openjdk",
+            "winget": "EclipseAdoptium.Temurin.21.JRE",
+            "choco": "temurin",
+        },
+        "graphviz": {
+            "apt-get": "graphviz",
+            "dnf": "graphviz",
+            "yum": "graphviz",
+            "pacman": "graphviz",
+            "zypper": "graphviz",
+            "brew": "graphviz",
+            "winget": "Graphviz.Graphviz",
+            "choco": "graphviz",
+        },
     }
     cmds = {
         "apt-get": lambda p: sudo + ["apt-get", "install"] + yes + p,
@@ -217,6 +261,7 @@ def run_jar(args, capture=True):
 
 # install -------------------------------------------------------------------
 
+
 def do_install(release, force, with_deps, assume_yes):
     if with_deps:
         missing = []
@@ -232,8 +277,7 @@ def do_install(release, force, with_deps, assume_yes):
 
     jar = jar_path()
     if jar.exists() and not force:
-        warning(f"plantuml.jar already present at [accent]{jar}[/accent] "
-                f"(version {installed_version() or 'unknown'})")
+        warning(f"plantuml.jar already present at [accent]{jar}[/accent] (version {installed_version() or 'unknown'})")
         info("Pass --force to re-download.")
     else:
         url, ver = resolve_download(release)
@@ -259,17 +303,22 @@ def report_environment():
     table.add_column("Component", style="info", no_wrap=True)
     table.add_column("Status", no_wrap=True)
     table.add_column("Detail", style="dim")
-    table.add_row("plantuml.jar",
-                  "[success]ok[/success]" if jar_path().exists() else "[error]missing[/error]",
-                  f"{jar_path()} ({installed_version() or '-'})")
-    table.add_row("Java", "[success]ok[/success]" if jv else "[error]missing[/error]",
-                  jv or "needed to run PlantUML")
-    table.add_row("Graphviz (dot)", "[success]ok[/success]" if dv else "[warning]missing[/warning]",
-                  dv or "optional - Smetana fallback will be used")
+    table.add_row(
+        "plantuml.jar",
+        "[success]ok[/success]" if jar_path().exists() else "[error]missing[/error]",
+        f"{jar_path()} ({installed_version() or '-'})",
+    )
+    table.add_row("Java", "[success]ok[/success]" if jv else "[error]missing[/error]", jv or "needed to run PlantUML")
+    table.add_row(
+        "Graphviz (dot)",
+        "[success]ok[/success]" if dv else "[warning]missing[/warning]",
+        dv or "optional - Smetana fallback will be used",
+    )
     console.print(table)
 
 
 # check ---------------------------------------------------------------------
+
 
 def do_check():
     report_environment()
@@ -302,6 +351,7 @@ def do_check():
 
 
 # render --------------------------------------------------------------------
+
 
 def collect_sources(target):
     p = Path(target)
@@ -637,9 +687,7 @@ Order ||--|{ Item
 
 def do_new(kind, output, force, render, fmt):
     if kind not in TEMPLATES:
-        raise click.ClickException(
-            f"Unknown template '{kind}'. Choose from: {', '.join(sorted(TEMPLATES))}"
-        )
+        raise click.ClickException(f"Unknown template '{kind}'. Choose from: {', '.join(sorted(TEMPLATES))}")
     out = Path(output) if output else Path(f"{kind}.puml")
     if out.exists() and not force:
         raise click.ClickException(f"{out} already exists. Pass --force to overwrite.")
@@ -651,6 +699,7 @@ def do_new(kind, output, force, render, fmt):
 
 
 # command group -------------------------------------------------------------
+
 
 @click.group("plantuml", epilog=EPILOG, context_settings={"help_option_names": ["-h", "--help"]})
 def plantuml():
@@ -665,8 +714,9 @@ def plantuml():
 
 
 @plantuml.command("install")
-@click.option("-r", "--release", default="latest", show_default=True,
-              help="PlantUML release tag, e.g. `v1.2026.6`, or `latest`.")
+@click.option(
+    "-r", "--release", default="latest", show_default=True, help="PlantUML release tag, e.g. `v1.2026.6`, or `latest`."
+)
 @click.option("-f", "--force", is_flag=True, help="Re-download even if plantuml.jar exists.")
 @click.option("--with-deps", is_flag=True, help="Also install Java and Graphviz via the system package manager.")
 @click.option("-y", "--yes", "assume_yes", is_flag=True, help="Assume yes for package-manager prompts.")
@@ -695,13 +745,21 @@ def check_cmd():
 
 @plantuml.command("render", epilog=EPILOG)
 @click.argument("target", type=click.Path())
-@click.option("-f", "--format", "fmt", type=click.Choice(FORMATS), default="png",
-              show_default=True, help="Output format.")
-@click.option("-o", "--output", type=click.Path(), default=None,
-              help="Output directory (default: next to each source).")
+@click.option(
+    "-f", "--format", "fmt", type=click.Choice(FORMATS), default="png", show_default=True, help="Output format."
+)
+@click.option(
+    "-o", "--output", type=click.Path(), default=None, help="Output directory (default: next to each source)."
+)
 @click.option("-t", "--theme", type=str, default=None, help="Apply a PlantUML theme to every diagram.")
-@click.option("-e", "--engine", type=click.Choice(["auto", "dot", "smetana"]), default="auto",
-              show_default=True, help="Layout engine. `auto` uses Graphviz when available.")
+@click.option(
+    "-e",
+    "--engine",
+    type=click.Choice(["auto", "dot", "smetana"]),
+    default="auto",
+    show_default=True,
+    help="Layout engine. `auto` uses Graphviz when available.",
+)
 @click.option("--scale", type=int, default=None, help="Output DPI (e.g. 150, 300) for raster formats.")
 @click.option("--charset", default="UTF-8", show_default=True, help="Source charset.")
 @click.option("--open", "do_open", is_flag=True, help="Open the first rendered file when done.")
@@ -722,8 +780,9 @@ def render_cmd(target, fmt, output, theme, engine, scale, charset, do_open, watc
 @click.option("-o", "--output", type=click.Path(), default=None, help="Output file (default: `<kind>.puml`).")
 @click.option("-f", "--force", is_flag=True, help="Overwrite the file if it exists.")
 @click.option("-r", "--render", is_flag=True, help="Render the new file right away.")
-@click.option("--format", "fmt", type=click.Choice(FORMATS), default="png", show_default=True,
-              help="Format to use with --render.")
+@click.option(
+    "--format", "fmt", type=click.Choice(FORMATS), default="png", show_default=True, help="Format to use with --render."
+)
 def new_cmd(kind, output, force, render, fmt):
     """Scaffold a vivid, ready-to-edit diagram template.
 
@@ -742,12 +801,14 @@ def themes_cmd():
     table = Table(show_header=False, expand=False, box=None)
     cols = 3
     for i in range(0, len(THEMES), cols):
-        table.add_row(*[f"[cyan]{t}[/cyan]" for t in THEMES[i:i + cols]])
+        table.add_row(*[f"[cyan]{t}[/cyan]" for t in THEMES[i : i + cols]])
     console.print(table)
     console.print()
     info(f"{len(THEMES)} themes. Use: [accent]evo plantuml render diagram.puml -t cerulean[/accent]")
-    console.print(Panel(
-        "Themes are also set inside a file with `!theme <name>` on its own line "
-        "right after `@startuml`.",
-        border_style="info", expand=False,
-    ))
+    console.print(
+        Panel(
+            "Themes are also set inside a file with `!theme <name>` on its own line right after `@startuml`.",
+            border_style="info",
+            expand=False,
+        )
+    )
