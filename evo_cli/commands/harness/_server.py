@@ -12,6 +12,7 @@ import rich_click as click
 from evo_cli.commands.harness._dag import plan_graphs, seam_graph
 from evo_cli.commands.harness._git import overlay
 from evo_cli.commands.harness._model import cluster, digest, find_plan, load_plans, load_seams
+from evo_cli.commands.harness._mutate import complete_plan
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 INDEX = WEB_DIR / "index.html"
@@ -66,6 +67,20 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
         except Exception as exc:  # a dashboard must not die because one plan has broken YAML
+            self._json({"error": str(exc)}, status=500)
+
+    def do_POST(self):
+        route = unquote(urlparse(self.path).path)
+        try:
+            if self.headers.get("X-Evo-Harness-Write") != "1":
+                self._json({"error": "missing harness write header"}, status=403)
+            elif route.startswith("/api/"):
+                self._write_api(route)
+            else:
+                self._json({"error": "not found"}, status=404)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        except Exception as exc:
             self._json({"error": str(exc)}, status=500)
 
     def _send(self, body: bytes, content_type: str, status: int = 200, headers=None):
@@ -125,6 +140,19 @@ class Handler(BaseHTTPRequestHandler):
                 fetch = query.get("fetch", ["0"])[0] in ("1", "true", "yes")
                 self._json(overlay(manifest, plan, fetch=fetch))
                 return
+        self._json({"error": f"no route {route}"}, status=404)
+
+    def _write_api(self, route: str):
+        parts = route.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "plans"] and parts[3] == "complete":
+            try:
+                plan = find_plan(self.manifest_path, parts[2])
+                completed = complete_plan(plan)
+            except click.ClickException as exc:
+                self._json({"error": exc.format_message()}, status=409)
+                return
+            self._json({"plan": completed.detail(), "graphs": plan_graphs(completed)})
+            return
         self._json({"error": f"no route {route}"}, status=404)
 
     def _stream(self):

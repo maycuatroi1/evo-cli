@@ -1,10 +1,13 @@
 import importlib
 import json
 import subprocess
+import threading
+from urllib.request import Request, urlopen
 
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
+from evo_cli.commands.harness._server import build_server
 
 # harness/__init__ binds the command object to the name `pull`, shadowing the submodule,
 # so the module has to be fetched by path rather than imported by name.
@@ -138,3 +141,35 @@ def test_pull_rejects_unknown_repo(tmp_path):
 
     assert result.exit_code == 1
     assert "Unknown repo name(s): missing" in result.output
+
+
+def test_serve_complete_plan_moves_file_and_is_idempotent(tmp_path):
+    root = tmp_path / "cluster"
+    active = root / "plans" / "active"
+    active.mkdir(parents=True)
+    manifest = root / "harness.yaml"
+    manifest.write_text("name: test-cluster\nrepos: []\n", encoding="utf-8")
+    plan = active / "finish-me.yaml"
+    plan.write_text("id: finish-me\ngoal: Finish this plan\nsteps: []\n", encoding="utf-8")
+
+    server = build_server(manifest, "127.0.0.1", 0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}/api/plans/finish-me/complete"
+    request = Request(url, method="POST", headers={"X-Evo-Harness-Write": "1"})
+
+    try:
+        with urlopen(request) as response:
+            payload = json.load(response)
+        with urlopen(request) as response:
+            repeated = json.load(response)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    completed = root / "plans" / "completed" / plan.name
+    assert not plan.exists()
+    assert completed.read_text(encoding="utf-8") == "id: finish-me\ngoal: Finish this plan\nsteps: []\n"
+    assert payload["plan"]["area"] == "completed"
+    assert repeated["plan"]["area"] == "completed"

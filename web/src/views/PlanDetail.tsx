@@ -1,6 +1,6 @@
-import { ArrowLeft, Copy, GitCommitHorizontal, RefreshCw } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Copy, GitCommitHorizontal, LoaderCircle, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
-import { fetchGit, fetchPlan, useAsync } from '../api'
+import { completePlan, fetchGit, fetchPlan, useAsync } from '../api'
 import { GraphPanel } from '../components/GraphPanel'
 import { LevelIcon, ToneIcon } from '../components/ToneIcon'
 import type { GitOverlay, SectionItem } from '../types'
@@ -17,8 +17,11 @@ const SECTION_TITLES: Record<string, string> = {
 const HIDE_KEYS = new Set(['status', 'what', 'repo', 'id', 'order'])
 
 export function PlanDetailView({ id, digest, go }: { id: string; digest: string | null; go: (to: string) => void }) {
-  const { data, error, loading } = useAsync(() => fetchPlan(id), [id, digest])
+  const { data, error, loading, reload } = useAsync(() => fetchPlan(id), [id, digest])
   const [section, setSection] = useState<string>('steps')
+  const [completing, setCompleting] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
 
   if (error) return <div className="view"><section className="panel"><p className="empty tone-bad">{error}</p></section></div>
   if (loading || !data) return <div className="view"><section className="panel"><p className="empty">Loading {id}...</p></section></div>
@@ -26,6 +29,21 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
   const { plan, graphs } = data
   const p = plan.progress
   const available = Object.entries(plan.sections).filter(([, items]) => items.length > 0)
+
+  const moveToDone = async () => {
+    setCompleting(true)
+    setActionError(null)
+    setActionMessage(null)
+    try {
+      await completePlan(id)
+      setActionMessage('Plan moved to completed.')
+      reload()
+    } catch (exc) {
+      setActionError(exc instanceof Error ? exc.message : 'Could not complete this plan.')
+    } finally {
+      setCompleting(false)
+    }
+  }
 
   return (
     <div className="view">
@@ -36,7 +54,24 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
         <h1 className="mono">{plan.id}</h1>
         <span className={`chip ${plan.area === 'active' ? 'tone-active' : 'tone-ok'}`}>{plan.area}</span>
         <span className="plan-path mono">{plan.path}</span>
+        {plan.area === 'active' ? (
+          <button className="tool plan-complete-action" onClick={moveToDone} disabled={completing}>
+            {completing ? <LoaderCircle size={15} className="spin" aria-hidden /> : <CheckCircle2 size={15} aria-hidden />}
+            {completing ? 'Moving...' : 'Move to done'}
+          </button>
+        ) : null}
       </header>
+
+      {actionMessage ? (
+        <p className="plan-action-message tone-ok" role="status">
+          <CheckCircle2 size={15} aria-hidden /> {actionMessage}
+        </p>
+      ) : null}
+      {actionError ? (
+        <p className="plan-action-message tone-bad" role="alert">
+          {actionError}
+        </p>
+      ) : null}
 
       <p className="plan-goal">{plan.goal}</p>
 

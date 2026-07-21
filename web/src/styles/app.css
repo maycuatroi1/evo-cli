@@ -1023,6 +1023,32 @@ table.grid tbody tr[data-cycle] td:first-child {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.plan-complete-action {
+  height: 40px;
+  padding: 0 14px;
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-weight: 600;
+  flex: none;
+}
+.plan-complete-action:hover:not(:disabled) {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 22%, var(--surface));
+  color: var(--fg);
+}
+.plan-action-message {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  margin: -8px 0 0;
+  padding: 8px 11px;
+  border: 1px solid currentColor;
+  border-radius: var(--r);
+  background: var(--surface);
+  font-size: 12px;
+}
 .plan-goal {
   margin: 0;
   max-width: 100ch;
@@ -1259,5 +1285,9 @@ table.grid tbody tr[data-cycle] td:first-child {
   }
   .plan-path {
     display: none;
+  }
+  .plan-complete-action {
+    min-height: 44px;
+    margin-left: auto;
   }
 }

@@ -11,7 +11,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useEffect, useMemo } from 'react'
-import { layout, neighbourhood, type FlowEdgeData, type FlowNodeData } from '../lib/layout'
+import { layout, neighbourhood, type FlowEdgeData, type FlowNodeData } from '../layout'
 import type { Graph } from '../types'
 import { DagNode } from './DagNode'
 

@@ -17,8 +17,8 @@ from evo_cli.console import console
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--open/--no-open", "open_browser", default=True, help="Open a browser once the server is up.")
 def serve(harness_path, port, host, open_browser):
-    """Read-only: the UI never writes YAML. Edit with `evo harness step|debt|question|repo`
-    and the dashboard follows the file within a second or two."""
+    """Inspect the harness and complete plans from the UI. Edit item statuses with
+    `evo harness step|debt|question|repo`; the dashboard follows changes within seconds."""
     manifest_path = find_manifest(harness_path)
     if not bundle_ready():
         raise click.ClickException(MISSING_BUNDLE)
@@ -32,7 +32,7 @@ def serve(harness_path, port, host, open_browser):
     console.print(f"[accent]{info['name']}[/] harness -> [bold]{url}[/]")
     console.print(
         f"[dim]{len(info['repos'])} repos, {len(seams)} seams, {len(plans)} plans from {info['root']}"
-        f"  |  read-only, edit with `evo harness step ...`[/]"
+        f"  |  plan completion enabled; edit items with `evo harness step ...`[/]"
     )
     console.print("[dim]Ctrl+C to stop.[/]")
 

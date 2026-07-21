@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import { RotateCcw, ShieldAlert } from 'lucide-react'
-import type { FlowNodeData } from '../lib/layout'
+import type { FlowNodeData } from '../layout'
 import { TONE_LABEL, ToneIcon } from './ToneIcon'
 
 type Props = NodeProps<Node<FlowNodeData>>

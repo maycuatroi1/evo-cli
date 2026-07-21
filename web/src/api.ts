@@ -8,8 +8,19 @@ async function get<T>(path: string): Promise<T> {
   return body as T
 }
 
+async function post<T>(path: string): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'X-Evo-Harness-Write': '1' },
+  })
+  const body = await response.json().catch(() => ({ error: `${response.status} ${response.statusText}` }))
+  if (!response.ok) throw new Error((body as { error?: string }).error ?? `${response.status}`)
+  return body as T
+}
+
 export const fetchState = () => get<State>('api/state')
 export const fetchPlan = (id: string) => get<PlanPayload>(`api/plans/${encodeURIComponent(id)}`)
+export const completePlan = (id: string) => post<PlanPayload>(`api/plans/${encodeURIComponent(id)}/complete`)
 export const fetchGit = (id: string, refetch = false) =>
   get<GitOverlay>(`api/plans/${encodeURIComponent(id)}/git${refetch ? '?fetch=1' : ''}`)
 

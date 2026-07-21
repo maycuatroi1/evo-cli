@@ -1,6 +1,6 @@
 import { Boxes, GitFork, Moon, Radio, RefreshCw, Sun, Waypoints } from 'lucide-react'
 import { fetchState, useAsync, useDigest } from './api'
-import { useRoute, useTheme } from './lib/route'
+import { useRoute, useTheme } from './route'
 import { ClusterView } from './views/Cluster'
 import { ContractsView } from './views/Contracts'
 import { PlanDetailView } from './views/PlanDetail'
@@ -66,7 +66,7 @@ export function App() {
           <span className={live ? 'tone-ok' : 'tone-idle'} title={live ? 'Watching files for changes' : 'Not connected'}>
             <Radio size={12} aria-hidden /> {live ? 'live' : 'offline'}
           </span>
-          <span className="mono">read-only</span>
+          <span className="mono">local edits</span>
         </div>
       </nav>
 
@@ -101,7 +101,7 @@ export function App() {
             <ContractsView state={state} selected={route.id} go={go} />
           ) : route.view === 'plans' ? (
             route.id ? (
-              <PlanDetailView id={route.id} digest={digest} go={go} />
+              <PlanDetailView key={route.id} id={route.id} digest={digest} go={go} />
             ) : (
               <PlansView state={state} go={go} />
             )

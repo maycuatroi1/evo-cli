@@ -7,6 +7,8 @@ from pathlib import Path
 import rich_click as click
 import yaml
 
+from evo_cli.commands.harness._model import Plan, load_plan_file
+
 PLAIN_SAFE = re.compile(r"^[A-Za-z][\w./#@-]*$")
 
 
@@ -93,3 +95,20 @@ def update_item(path: Path, section: str, index: int, updates: dict) -> dict:
 
     path.write_text(updated, encoding="utf-8")
     return {"old": old, "new": updates}
+
+
+def complete_plan(plan: Plan) -> Plan:
+    """Move an active plan into the completed area without rewriting its YAML."""
+    if plan.area == "completed":
+        return plan
+    if plan.area != "active":
+        raise click.ClickException(f"Plan {plan.id!r} is in an unsupported area: {plan.area!r}.")
+
+    destination_dir = plan.path.parent.parent / "completed"
+    destination = destination_dir / plan.path.name
+    if destination.exists():
+        raise click.ClickException(f"Cannot complete {plan.id!r}: {destination} already exists.")
+
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    plan.path.rename(destination)
+    return load_plan_file(destination)
