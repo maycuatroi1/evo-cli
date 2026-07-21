@@ -233,6 +233,7 @@ def test_batch_requires_inputs(runner):
 
 
 def test_speak_writes_and_skips_playback(runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(core, "resolve_provider", lambda provider: "vbee")
     monkeypatch.setattr(core, "synthesize", lambda text, **kwargs: b"fake-audio")
     target = tmp_path / "out.mp3"
     result = runner.invoke(cli, ["tts", "speak", "xin chào", "--no-play", "-o", str(target)])

@@ -1,4 +1,5 @@
 import json
+import re
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -9,6 +10,16 @@ from evo_cli.commands import gdrive
 from evo_cli.credentials import doctor as doctor_module
 from evo_cli.credentials import migrate, oauth_flow, registry
 from evo_cli.credentials.store import compile_flat, get_value, set_value
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_BOX_RE = re.compile(r"[─╭╮╰╯│┤├┬┴┼]")
+
+
+def _plain(text):
+    """Strip ANSI color codes and box-drawing chars, then collapse whitespace."""
+    text = _ANSI_RE.sub("", text)
+    text = _BOX_RE.sub(" ", text)
+    return re.sub(r"\s+", " ", text)
 
 
 @pytest.fixture
@@ -250,14 +261,14 @@ def test_migrate_command_refuses_nonempty_folder(store, tmp_path):
     result = CliRunner().invoke(cli, ["cred", "migrate", "--source", str(source)])
 
     assert result.exit_code != 0
-    assert "already has files" in result.output
+    assert "already has files" in _plain(result.output)
 
 
 def test_refresh_requires_exactly_one_target(store):
     result = CliRunner().invoke(cli, ["cred", "refresh"])
 
     assert result.exit_code != 0
-    assert "exactly one of --all or --service" in result.output
+    assert "exactly one of --all or --service" in _plain(result.output)
 
 
 def test_refresh_writes_new_token_and_recompiles(store, monkeypatch):
