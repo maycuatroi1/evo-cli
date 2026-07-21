@@ -90,6 +90,36 @@ export interface Seam {
   keys: SeamKey[]
 }
 
+export interface DeploymentTenant {
+  id: string
+  code: string
+  name: string
+  aliases: string[]
+}
+
+export interface Deployment {
+  index: number
+  deploymentId: string
+  product: string
+  tenantId: string
+  environment: string
+  kind: string
+  webUrl: string
+  apiUrl: string
+  authUrl: string
+  capabilities: string[]
+  status: string
+  aliases: string[]
+}
+
+export interface Deployments {
+  version: number
+  configVersion: string
+  environments: string[]
+  tenants: DeploymentTenant[]
+  deployments: Deployment[]
+}
+
 export interface Progress {
   steps_total: number
   steps_done: number
@@ -134,6 +164,7 @@ export interface State {
   cluster: Cluster
   seams: Seam[]
   seamGraph: Graph
+  deployments: Deployments
   plans: PlanSummary[]
 }
 

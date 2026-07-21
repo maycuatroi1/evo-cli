@@ -1,8 +1,9 @@
-import { Boxes, GitFork, Moon, Radio, RefreshCw, Sun, Waypoints } from 'lucide-react'
+import { Boxes, GitFork, Moon, Radio, RefreshCw, Server, Sun, Waypoints } from 'lucide-react'
 import { fetchState, useAsync, useDigest } from './api'
 import { useRoute, useTheme } from './route'
 import { ClusterView } from './views/Cluster'
 import { ContractsView } from './views/Contracts'
+import { DeploymentsView } from './views/Deployments'
 import { PlanDetailView } from './views/PlanDetail'
 import { PlansView } from './views/Plans'
 
@@ -15,6 +16,7 @@ export function App() {
   const NAV = [
     { view: 'cluster', to: '#/', label: 'Cluster', icon: Boxes },
     { view: 'contracts', to: '#/contracts', label: 'Contracts', icon: GitFork },
+    { view: 'deployments', to: '#/deployments', label: 'Deployments', icon: Server },
     { view: 'plans', to: '#/plans', label: 'Plans', icon: Waypoints },
   ] as const
 
@@ -36,6 +38,7 @@ export function App() {
                 <entry.icon size={15} aria-hidden />
                 {entry.label}
                 {entry.view === 'contracts' && state ? <span className="nav-count mono">{state.seams.length}</span> : null}
+                {entry.view === 'deployments' && state ? <span className="nav-count mono">{state.deployments.deployments.length}</span> : null}
                 {entry.view === 'plans' && state ? <span className="nav-count mono">{state.plans.length}</span> : null}
               </a>
             </li>
@@ -99,6 +102,8 @@ export function App() {
             </section>
           ) : route.view === 'contracts' ? (
             <ContractsView state={state} selected={route.id} go={go} />
+          ) : route.view === 'deployments' ? (
+            <DeploymentsView state={state} selected={route.id} go={go} />
           ) : route.view === 'plans' ? (
             route.id ? (
               <PlanDetailView key={route.id} id={route.id} digest={digest} go={go} />

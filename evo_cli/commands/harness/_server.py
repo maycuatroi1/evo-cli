@@ -11,7 +11,14 @@ import rich_click as click
 
 from evo_cli.commands.harness._dag import plan_graphs, seam_graph
 from evo_cli.commands.harness._git import overlay
-from evo_cli.commands.harness._model import cluster, digest, find_plan, load_plans, load_seams
+from evo_cli.commands.harness._model import (
+    cluster,
+    digest,
+    find_plan,
+    load_deployments,
+    load_plans,
+    load_seams,
+)
 from evo_cli.commands.harness._mutate import complete_plan
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -121,6 +128,7 @@ class Handler(BaseHTTPRequestHandler):
                     "cluster": cluster(manifest),
                     "seams": load_seams(manifest),
                     "seamGraph": seam_graph(manifest),
+                    "deployments": load_deployments(manifest),
                     "plans": [p.summary() for p in load_plans(manifest)],
                 }
             )

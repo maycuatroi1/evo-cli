@@ -32,6 +32,10 @@ def contracts_file(manifest_path: Path) -> Path:
     return harness_root(manifest_path) / "contracts.yaml"
 
 
+def deployments_file(manifest_path: Path) -> Path:
+    return harness_root(manifest_path) / "deployments.yaml"
+
+
 def tone_of(section: str, status: str | None) -> str:
     value = (status or "").strip().lower()
     if not value:
@@ -218,6 +222,60 @@ def load_seams(manifest_path: Path) -> list[dict]:
     return out
 
 
+def load_deployments(manifest_path: Path) -> dict:
+    path = deployments_file(manifest_path)
+    empty = {"version": 0, "configVersion": "", "environments": [], "tenants": [], "deployments": []}
+    if not path.is_file():
+        return empty
+    raw = read_yaml(path, required=False)
+    if not isinstance(raw, dict):
+        return empty
+
+    environments = [str(e) for e in (raw.get("environments") or []) if e is not None]
+
+    tenants = []
+    for tenant in raw.get("tenants") or []:
+        if not isinstance(tenant, dict):
+            continue
+        tenants.append(
+            {
+                "id": str(tenant.get("id") or ""),
+                "code": str(tenant.get("code") or ""),
+                "name": str(tenant.get("name") or ""),
+                "aliases": [str(a) for a in (tenant.get("aliases") or [])],
+            }
+        )
+
+    deployments = []
+    for index, dep in enumerate(raw.get("deployments") or []):
+        if not isinstance(dep, dict):
+            continue
+        deployments.append(
+            {
+                "index": index,
+                "deploymentId": str(dep.get("deployment_id") or f"deployment-{index}"),
+                "product": str(dep.get("product") or ""),
+                "tenantId": str(dep.get("tenant_id")) if dep.get("tenant_id") else "",
+                "environment": str(dep.get("environment") or ""),
+                "kind": str(dep.get("deployment_kind") or ""),
+                "webUrl": str(dep.get("web_url")) if dep.get("web_url") else "",
+                "apiUrl": str(dep.get("api_url")) if dep.get("api_url") else "",
+                "authUrl": str(dep.get("auth_url")) if dep.get("auth_url") else "",
+                "capabilities": [str(c) for c in (dep.get("capabilities") or [])],
+                "status": str(dep.get("status") or ""),
+                "aliases": [str(a) for a in (dep.get("aliases") or [])],
+            }
+        )
+
+    return {
+        "version": raw.get("version") or 0,
+        "configVersion": str(raw.get("config_version") or ""),
+        "environments": environments,
+        "tenants": tenants,
+        "deployments": deployments,
+    }
+
+
 def _read_text(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -262,7 +320,7 @@ def cluster(manifest_path: Path) -> dict:
 def digest(manifest_path: Path) -> str:
     root = harness_root(manifest_path)
     parts = []
-    targets = [manifest_path, contracts_file(manifest_path)]
+    targets = [manifest_path, contracts_file(manifest_path), deployments_file(manifest_path)]
     targets.extend(sorted(plans_dir(manifest_path).rglob("*.yaml")) if plans_dir(manifest_path).is_dir() else [])
     targets.extend(sorted((root / "principles").glob("*.md")) if (root / "principles").is_dir() else [])
     for path in targets:
