@@ -136,7 +136,7 @@ def _judge(entry: dict, out: dict) -> None:
         )
         verdicts.append({"level": "error", "text": f"Branch {branch!r} does not exist, locally or on origin.{hint}"})
 
-    if out.get("head_ref") and out.get("base_ref"):
+    if out.get("head_ref") and out.get("base_ref") and out["head_ref"] != out["base_ref"]:
         if out["tone"] == "ok" and out.get("merged") is False:
             verdicts.append(
                 {
