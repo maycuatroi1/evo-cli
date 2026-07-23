@@ -1,6 +1,11 @@
 import { CircleHelp, Wrench } from 'lucide-react'
 import type { PlanSummary, State } from '../types'
 
+function humanizeId(id: string): string {
+  const spaced = id.replace(/-/g, ' ')
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+}
+
 export function PlansView({ state, go }: { state: State; go: (to: string) => void }) {
   const active = state.plans.filter((plan) => plan.area === 'active')
   const completed = state.plans.filter((plan) => plan.area !== 'active')
@@ -48,7 +53,7 @@ function PlanCard({ plan, onOpen }: { plan: PlanSummary; onOpen: () => void }) {
   return (
     <button className="plan-card" onClick={onOpen} data-tone={tone}>
       <span className="plan-card-head">
-        <span className="plan-card-id mono">{plan.id}</span>
+        <span className="plan-card-id mono">{humanizeId(plan.id)}</span>
         <span className={`chip tone-${tone}`}>{p.pct}%</span>
       </span>
       <span className="plan-card-goal">{plan.goal}</span>
