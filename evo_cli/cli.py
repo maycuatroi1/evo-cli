@@ -1,6 +1,7 @@
 import rich_click as click
 
 from evo_cli import __version__
+from evo_cli.commands.agent_toy import agent_toy
 from evo_cli.commands.claude_code import setup_claude
 from evo_cli.commands.cloudflare import cfssh
 from evo_cli.commands.cred import cred_group
@@ -51,6 +52,7 @@ def cli():
     """
 
 
+setup_group.add_command(agent_toy)
 setup_group.add_command(setup_claude)
 setup_group.add_command(setup_gh)
 setup_group.add_command(setup_opencode)

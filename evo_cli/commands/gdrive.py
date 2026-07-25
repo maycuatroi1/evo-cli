@@ -466,8 +466,8 @@ def doc_read(target, out_dir, no_images, raw, via_docs_api):
     """Read a Google Doc and write **doc.md** + downloaded **images/**.
 
     `TARGET` is either a Google Docs URL (`https://docs.google.com/document/d/<id>/...`)
-    or a raw document ID. Auth uses the Drive OAuth token saved in
-    `~/.omelet.json` under `rclone.token`, refreshing it automatically when expired.
+    or a raw document ID.     Auth uses the Drive OAuth token saved in
+    `~/.omelet.json` under `google_drive.token`, refreshing it automatically when expired.
 
     Default path: Drive API export to `text/markdown`, then any inline image URLs
     in the markdown are downloaded into `images/` and their references rewritten

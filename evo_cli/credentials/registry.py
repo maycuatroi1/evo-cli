@@ -167,9 +167,12 @@ SPECS = [
         "type": "oauth_token",
         "lifetime": "access ~1h, refresh until revoked",
         "description": (
-            "rclone Google Drive remote: OAuth token + root folder. Being replaced by google_drive; "
-            "still active because red-life/packages/core/src/teaching/drive.ts reads it. Do not mark "
-            "deprecated until that consumer migrates - compile would drop the key and break it."
+            "rclone Google Drive remote: OAuth token + root folder. Being replaced by google_drive. "
+            "The in-cluster consumer (red-life/packages/core/src/teaching/drive.ts) now reads "
+            "google_drive; rclone stays active because two sibling repos outside the harness still "
+            "read and refresh it: evo-lms-harness/cli/modules/gdrive.py and "
+            "fu-teching/tools/schedule/drive.py. Do not mark deprecated until both migrate - compile "
+            "would drop the key and break them."
         ),
         "rotate": "evo cred refresh --service rclone (or rclone config reconnect)",
         "oauth": {
