@@ -8,6 +8,7 @@ from evo_cli.commands.agent_toy import (
     INSTALLED,
     PARTIAL,
     TOYS,
+    ensure_opencode_plugin,
     install_agent_skills,
     install_context_mode,
     install_plannotator,
@@ -108,6 +109,7 @@ def test_plannotator_install_command_without_a_shell(monkeypatch):
 def test_plannotator_is_partial_when_the_installer_fails(monkeypatch, options):
     monkeypatch.setattr(toy, "ensure_marketplace", lambda *args: True)
     monkeypatch.setattr(toy, "ensure_plugin", lambda *args: True)
+    monkeypatch.setattr(toy, "ensure_opencode_plugin", lambda *args: True)
     monkeypatch.setattr(toy, "run_plannotator_installer", lambda minimal: False)
     monkeypatch.setattr(toy, "plannotator_binary", lambda: "/usr/local/bin/plannotator")
     assert install_plannotator(options) == PARTIAL
@@ -116,6 +118,7 @@ def test_plannotator_is_partial_when_the_installer_fails(monkeypatch, options):
 def test_plannotator_fails_when_no_binary_landed(monkeypatch, options):
     monkeypatch.setattr(toy, "ensure_marketplace", lambda *args: True)
     monkeypatch.setattr(toy, "ensure_plugin", lambda *args: True)
+    monkeypatch.setattr(toy, "ensure_opencode_plugin", lambda *args: True)
     monkeypatch.setattr(toy, "run_plannotator_installer", lambda minimal: False)
     monkeypatch.setattr(toy, "plannotator_binary", lambda: None)
     assert install_plannotator(options) == FAILED
@@ -124,10 +127,48 @@ def test_plannotator_fails_when_no_binary_landed(monkeypatch, options):
 def test_plannotator_minimal_skips_the_plugin(monkeypatch, options):
     calls = []
     monkeypatch.setattr(toy, "ensure_marketplace", lambda *args: calls.append(args) or True)
+    monkeypatch.setattr(toy, "ensure_opencode_plugin", lambda *args: calls.append(args) or True)
     monkeypatch.setattr(toy, "run_plannotator_installer", lambda minimal: True)
     options["minimal"] = True
     assert install_plannotator(options) == INSTALLED
     assert calls == []
+
+
+def test_plannotator_is_partial_when_opencode_wiring_fails(monkeypatch, options):
+    monkeypatch.setattr(toy, "ensure_marketplace", lambda *args: True)
+    monkeypatch.setattr(toy, "ensure_plugin", lambda *args: True)
+    monkeypatch.setattr(toy, "ensure_opencode_plugin", lambda *args: False)
+    monkeypatch.setattr(toy, "run_plannotator_installer", lambda minimal: True)
+    assert install_plannotator(options) == PARTIAL
+
+
+def test_opencode_plugin_lands_in_the_global_config(monkeypatch, tmp_path):
+    config = tmp_path / "opencode.jsonc"
+    config.write_text('{"plugin": ["oh-my-openagent@latest"]}\n', encoding="utf-8")
+    monkeypatch.setattr(toy, "get_global_config_path", lambda: config)
+    monkeypatch.setattr(toy.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert ensure_opencode_plugin("user") is True
+    assert ensure_opencode_plugin("user") is True
+    plugins = toy.load_jsonc(config)["plugin"]
+    assert plugins == ["oh-my-openagent@latest", "@plannotator/opencode@latest"]
+
+
+def test_opencode_plugin_scopes_to_the_project(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    missing = tmp_path / "home" / "opencode.jsonc"
+    monkeypatch.setattr(toy, "get_global_config_path", lambda: missing)
+    monkeypatch.setattr(toy.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert ensure_opencode_plugin("project") is True
+    project_config = tmp_path / "opencode.json"
+    assert toy.load_jsonc(project_config)["plugin"] == ["@plannotator/opencode@latest"]
+
+
+def test_opencode_plugin_is_skipped_without_opencode(monkeypatch, tmp_path):
+    missing = tmp_path / "opencode.jsonc"
+    monkeypatch.setattr(toy, "get_global_config_path", lambda: missing)
+    monkeypatch.setattr(toy.shutil, "which", lambda name: None)
+    assert ensure_opencode_plugin("user") is True
+    assert not missing.exists()
 
 
 def test_context_mode_needs_claude(options):
