@@ -227,6 +227,67 @@ def test_step_graph_titles_each_node_without_losing_the_full_what(tmp_path):
     assert "..." not in metas["3"]["title"]
 
 
+def test_step_graph_warns_once_for_the_whole_plan_when_titles_are_missing(tmp_path):
+    plan = _plan(
+        tmp_path,
+        """
+        id: p
+        steps:
+          - id: 1
+            what: first thing
+            status: pending
+          - id: 2
+            title: "   "
+            what: second thing
+            status: pending
+            depends_on_step: [1]
+          - id: 3
+            title: named at last
+            what: third thing
+            status: pending
+            depends_on_step: [2]
+        """,
+    )
+    graph = plan_step_graph(plan)
+    missing = [w for w in graph["warnings"] if "declare no title" in w["text"]]
+
+    assert len(missing) == 1
+    assert missing[0]["level"] == "warn"
+    assert "2 of 3 steps" in missing[0]["text"]
+    assert "truncated slice of their what" in missing[0]["text"]
+    assert not [w for w in graph["warnings"] if w["level"] == "error"]
+    assert graph["acyclic"] is True
+
+
+def test_step_graph_says_nothing_when_every_step_carries_a_title(tmp_path):
+    plan = _plan(
+        tmp_path,
+        """
+        id: p
+        steps:
+          - id: 1
+            title: first
+            what: first thing
+            status: pending
+          - id: 2
+            title: second
+            what: second thing
+            status: pending
+            depends_on_step: [1]
+          - id: 3
+            title: third
+            what: third thing
+            status: pending
+            depends_on_step: [2]
+        """,
+    )
+    graph = plan_step_graph(plan)
+
+    assert not [w for w in graph["warnings"] if "declare no title" in w["text"]]
+    assert graph["warnings"] == []
+    assert graph["acyclic"] is True
+
+
 def test_step_graph_survives_a_step_with_neither_title_nor_what(tmp_path):
     plan = _plan(tmp_path, "id: p\nsteps:\n  - id: 1\n    repo: alpha\n    status: pending\n")
     graph = plan_step_graph(plan)

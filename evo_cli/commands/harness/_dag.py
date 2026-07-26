@@ -307,9 +307,13 @@ def plan_step_graph(plan: Plan) -> dict:
 
     nodes = []
     lanes: dict[str, list[str]] = {}
+    untitled = 0
     for index, entry in enumerate(steps):
         repo = str(entry.get("repo") or "unassigned")
         status = str(entry.get("status") or "")
+        authored = entry.get("title")
+        if not (isinstance(authored, str) and authored.strip()):
+            untitled += 1
         lanes.setdefault(repo, []).append(node_ids[index])
         nodes.append(
             {
@@ -333,6 +337,14 @@ def plan_step_graph(plan: Plan) -> dict:
 
     edges = []
     warnings = []
+    if untitled:
+        warnings.append(
+            {
+                "level": "warn",
+                "text": f"{untitled} of {len(steps)} steps declare no title, so the DAG labels them with a "
+                "truncated slice of their what. Add a title to each step to say what it does in one line.",
+            }
+        )
     seen: set = set()
 
     def add(source: str, target: str, label: str, kind: str) -> None:
