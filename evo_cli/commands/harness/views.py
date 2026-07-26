@@ -3,7 +3,7 @@ from __future__ import annotations
 import rich_click as click
 
 from evo_cli.commands.harness._dag import plan_repo_graph, plan_step_graph, seam_graph, step_key
-from evo_cli.commands.harness._model import cluster, find_plan, load_plans, load_seams, tone_of
+from evo_cli.commands.harness._model import cluster, find_plan, load_plans, load_seams, step_title, tone_of
 from evo_cli.commands.harness._paths import find_manifest, git, harness_option
 from evo_cli.commands.harness._render import (
     TONE_STYLE,
@@ -150,6 +150,6 @@ def step_board(item, highlight=None) -> None:
             f"[bold]{key}[/]",
             str(entry.get("repo") or "-"),
             f"[{style}]{status or '-'}[/]",
-            one_line(entry.get("what") or entry.get("issue"), width),
+            step_title(entry, width),
         )
     console.print(grid)

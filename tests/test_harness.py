@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
+from evo_cli.commands.harness._model import step_title
 from evo_cli.commands.harness._server import Handler, Server, build_server
 
 # harness/__init__ binds the command object to the name `pull`, shadowing the submodule,
@@ -215,3 +216,39 @@ def test_serve_stays_quiet_when_a_client_drops_a_keep_alive_connection(tmp_path,
         thread.join(timeout=5)
 
     assert "Traceback" not in capsys.readouterr().err
+
+
+def test_step_title_prefers_the_authored_title():
+    item = {"title": "  Ship the picker  ", "what": "a much longer sentence nobody wants in a table cell"}
+    assert step_title(item) == "Ship the picker"
+
+
+def test_step_title_keeps_a_short_what_untouched():
+    assert step_title({"what": "wire the flag through"}) == "wire the flag through"
+    assert "..." not in step_title({"what": "wire the flag through"})
+    assert step_title({"issue": "the board truncates mid-word"}) == "the board truncates mid-word"
+
+
+def test_step_title_cuts_on_a_word_boundary():
+    what = "Add a step_title helper to the model layer so the board and the dashboard agree on headlines"
+    title = step_title({"what": what})
+
+    assert len(title) <= 60
+    assert title.endswith("...")
+    assert what.startswith(title[:-3])
+    assert what[len(title) - 3] == " "
+    assert not title[:-3].endswith(" ")
+
+
+def test_step_title_never_overruns_the_limit_on_a_single_endless_word():
+    title = step_title({"what": "x" * 300})
+
+    assert len(title) <= 60
+    assert title.endswith("...")
+
+
+def test_step_title_folds_whitespace_and_tolerates_an_empty_step():
+    assert step_title({"what": "  folded\n   across   lines  "}) == "folded across lines"
+    assert step_title({}) == ""
+    assert step_title({"title": "   "}) == ""
+    assert step_title({"title": "   ", "what": "fallback wins"}) == "fallback wins"

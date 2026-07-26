@@ -191,3 +191,46 @@ def test_seams_are_parsed_with_their_defaults(tmp_path):
     assert seam["blocking"] is False
     assert seam["kind"] == "cli-surface"
     assert seam["consumers"] == ["beta"]
+
+
+def test_step_graph_titles_each_node_without_losing_the_full_what(tmp_path):
+    long_what = "Rewrite the harness dashboard so every step node carries a short readable headline " * 3
+    plan = _plan(
+        tmp_path,
+        f"""
+        id: p
+        steps:
+          - id: 1
+            title: Short authored title
+            what: {long_what.strip()}
+            status: pending
+          - id: 2
+            what: {long_what.strip()}
+            status: pending
+          - id: 3
+            what: still short
+            status: pending
+        """,
+    )
+    metas = {node["meta"]["key"]: node["meta"] for node in plan_step_graph(plan)["nodes"]}
+
+    assert metas["1"]["title"] == "Short authored title"
+    assert metas["1"]["what"] == long_what.strip()
+
+    assert len(metas["2"]["title"]) <= 60
+    assert metas["2"]["title"].endswith("...")
+    assert long_what.startswith(metas["2"]["title"][:-3])
+    assert long_what[len(metas["2"]["title"]) - 3] == " "
+    assert metas["2"]["what"] == long_what.strip()
+
+    assert metas["3"]["title"] == "still short"
+    assert "..." not in metas["3"]["title"]
+
+
+def test_step_graph_survives_a_step_with_neither_title_nor_what(tmp_path):
+    plan = _plan(tmp_path, "id: p\nsteps:\n  - id: 1\n    repo: alpha\n    status: pending\n")
+    graph = plan_step_graph(plan)
+
+    assert [node["meta"]["title"] for node in graph["nodes"]] == [""]
+    assert graph["acyclic"] is True
+    assert not [w for w in graph["warnings"] if w["level"] == "error"]

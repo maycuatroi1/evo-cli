@@ -5,10 +5,10 @@ from datetime import datetime
 import rich_click as click
 
 from evo_cli.commands.harness._dag import step_key
-from evo_cli.commands.harness._model import find_plan, tone_of
+from evo_cli.commands.harness._model import find_plan, step_title, tone_of
 from evo_cli.commands.harness._mutate import update_item
 from evo_cli.commands.harness._paths import find_manifest, harness_option
-from evo_cli.commands.harness._render import interactive, one_line, title_width
+from evo_cli.commands.harness._render import interactive, title_width
 from evo_cli.commands.harness.views import step_board
 from evo_cli.console import console
 
@@ -39,11 +39,11 @@ def _write(manifest_path, plan_id, section, index, status, note, no_date):
         updates["note"] = note
 
     result = update_item(item.path, section, index, updates)
-    label = entries[index].get("what") or entries[index].get("repo") or entries[index].get("issue") or "?"
+    label = step_title(entries[index], 100) or str(entries[index].get("repo") or "?")
     console.print(
         f"[green]DONE[/]  {item.id} / {section}[{index}]: [dim]{result['old'].get('status')}[/] -> [bold]{status}[/]"
     )
-    console.print(f"      {' '.join(str(label).split())[:100]}")
+    console.print(f"      {label}")
     for key, value in updates.items():
         if key != "status":
             console.print(f"      [dim]{key}: {value}[/]")
@@ -73,8 +73,7 @@ def _pick(item, key, status):
     if key is None:
         choices = [
             questionary.Choice(
-                title=f"{step_key(entry, index):>3}  {str(entry.get('status') or '-'):<12} "
-                f"{one_line(entry.get('what') or entry.get('issue'), width)}",
+                title=f"{step_key(entry, index):>3}  {str(entry.get('status') or '-'):<12} {step_title(entry, width)}",
                 value=step_key(entry, index),
             )
             for index, entry in enumerate(entries)

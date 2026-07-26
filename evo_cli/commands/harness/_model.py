@@ -51,11 +51,31 @@ def tone_of(section: str, status: str | None) -> str:
     return "idle"
 
 
+def step_title(item: dict, limit: int = 60) -> str:
+    title = item.get("title")
+    if isinstance(title, str) and title.strip():
+        return title.strip()
+    text = " ".join(str(item.get("what") or item.get("issue") or "").split())
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    head = text[: limit - 3]
+    boundary = head.rfind(" ")
+    if boundary > 0:
+        head = head[:boundary]
+    return head.rstrip() + "..."
+
+
 def _title_of(section: str, item: dict) -> str:
     if section == "repos":
         return str(item.get("repo") or "?")
     if section == "references":
         return str(item.get("what") or item.get("where") or "?")
+    if section == "steps":
+        headline = step_title(item)
+        if headline:
+            return headline
     for key in TITLE_KEYS:
         value = item.get(key)
         if isinstance(value, str) and value.strip():

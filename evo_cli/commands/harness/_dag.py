@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from evo_cli.commands.harness._model import Plan, cluster, load_seams, tone_of
+from evo_cli.commands.harness._model import Plan, cluster, load_seams, step_title, tone_of
 
 CLUSTER_REPO = "__cluster__"
 
@@ -323,6 +323,7 @@ def plan_step_graph(plan: Plan) -> dict:
                     "repo": repo,
                     "status": status,
                     "blocking": bool(entry.get("blocking")),
+                    "title": step_title(entry),
                     "what": " ".join(str(entry.get("what") or entry.get("issue") or "").split()),
                     "verify": str(entry.get("verify") or ""),
                     "note": " ".join(str(entry.get("note") or "").split()),
