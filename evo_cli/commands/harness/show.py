@@ -22,14 +22,17 @@ HIDE_KEYS = {"status", "order", "what", "repo", "id"}
 def _render_item(section: str, index: int, item: dict, full: bool) -> None:
     status = item.get("status")
     style = TONE_STYLE[tone_of(section, status)]
-    head = item.get("what") or item.get("repo") or item.get("issue") or "?"
+    authored = item.get("title")
+    titled = isinstance(authored, str) and bool(authored.strip())
+    head = authored.strip() if titled else (item.get("what") or item.get("repo") or item.get("issue") or "?")
+    hidden = (HIDE_KEYS - {"what"}) | {"title"} if titled else HIDE_KEYS
     label = item.get("id", item.get("order", index))
     badge = f"[{style}]{status}[/]" if status else ""
     if not full:
         head = one_line(head, title_width(reserved=18))
     console.print(f"  [bold]{label:>3}[/] {head}  {badge}")
     for key, value in item.items():
-        if key in HIDE_KEYS:
+        if key in hidden:
             continue
         if isinstance(value, list):
             value = "; ".join(str(v) for v in value) or "-"

@@ -1,5 +1,8 @@
 import textwrap
 
+from click.testing import CliRunner
+
+from evo_cli.cli import cli
 from evo_cli.commands.harness._dag import plan_repo_graph, plan_step_graph, seam_graph
 from evo_cli.commands.harness._model import load_plan_file, load_seams
 
@@ -295,3 +298,52 @@ def test_step_graph_survives_a_step_with_neither_title_nor_what(tmp_path):
     assert [node["meta"]["title"] for node in graph["nodes"]] == [""]
     assert graph["acyclic"] is True
     assert not [w for w in graph["warnings"] if w["level"] == "error"]
+
+
+def _titled_cluster(tmp_path):
+    root = tmp_path / "cluster"
+    (root / "plans" / "active").mkdir(parents=True)
+    (root / "harness.yaml").write_text(
+        f"name: test\nworkspace: {tmp_path.as_posix()}\nrepos:\n- name: alpha\n  present: true\n",
+        encoding="utf-8",
+    )
+    (root / "contracts.yaml").write_text("seams: []\n", encoding="utf-8")
+    (tmp_path / "alpha").mkdir(exist_ok=True)
+    long_what = "Rewrite the harness dashboard so every step node carries a short readable headline " * 3
+    (root / "plans" / "active" / "p.yaml").write_text(
+        textwrap.dedent(
+            f"""
+            id: p
+            steps:
+              - id: 1
+                repo: alpha
+                title: Short authored title
+                what: {long_what.strip()}
+                status: pending
+              - id: 2
+                repo: alpha
+                what: {long_what.strip()}
+                status: pending
+            """
+        ),
+        encoding="utf-8",
+    )
+    return root
+
+
+def test_graph_command_prints_the_title_rather_than_the_full_what(tmp_path):
+    root = _titled_cluster(tmp_path)
+    result = CliRunner().invoke(cli, ["harness", "graph", "p:steps", "--harness", str(root)])
+
+    assert result.exit_code == 0
+    assert "Short authored title" in result.output
+    assert "Rewrite the harness dashboard so every" not in result.output
+
+
+def test_show_command_keeps_the_full_what_when_a_step_declares_a_title(tmp_path):
+    root = _titled_cluster(tmp_path)
+    result = CliRunner().invoke(cli, ["harness", "show", "p", "--full", "--harness", str(root)])
+
+    assert result.exit_code == 0
+    assert "Short authored title" in result.output
+    assert "what:" in result.output

@@ -73,7 +73,8 @@ def print_graph(title: str, graph: dict) -> None:
         for node in sorted(by_rank[rank], key=lambda n: n["id"]):
             style = TONE_STYLE[node["tone"]]
             cycle = " [yellow](in cycle)[/]" if node["inCycle"] else ""
-            detail = node["meta"].get("what") or node["meta"].get("role") or node["meta"].get("status") or ""
+            meta = node["meta"]
+            detail = meta.get("title") or meta.get("what") or meta.get("role") or meta.get("status") or ""
             console.print(f"    [{style}]*[/] [bold]{node['label']}[/]{cycle}  [dim]{one_line(detail, width)}[/]")
             for edge in sorted(outgoing.get(node["id"], []), key=lambda e: e["target"]):
                 arrow = "-->" if not edge["dashed"] else "..>"
