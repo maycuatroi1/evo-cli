@@ -11,6 +11,7 @@ export function DagNode({ data, selected }: Props) {
   const isStep = node.kind === 'step'
   const subtitle = String(meta.title ?? meta.what ?? meta.role ?? meta.note ?? '')
   const status = String(meta.status ?? '')
+  const titleClass = meta.titled ? 'dagnode-title is-full' : 'dagnode-title'
 
   return (
     <div
@@ -28,7 +29,7 @@ export function DagNode({ data, selected }: Props) {
           <ToneIcon tone={node.tone} />
         </span>
         <span className={isStep ? 'dagnode-key mono' : 'dagnode-title'}>{node.label}</span>
-        {isStep && subtitle ? <span className="dagnode-title">{subtitle}</span> : null}
+        {isStep && subtitle ? <span className={titleClass}>{subtitle}</span> : null}
         {node.inCycle ? (
           <span className="dagnode-flag tone-warn" title="Part of a dependency cycle">
             <RotateCcw size={11} strokeWidth={2.5} aria-hidden />

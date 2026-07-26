@@ -219,9 +219,11 @@ def test_step_graph_titles_each_node_without_losing_the_full_what(tmp_path):
 
     assert metas["1"]["title"] == "Short authored title"
     assert metas["1"]["what"] == long_what.strip()
+    assert metas["1"]["titled"] is True
 
     assert len(metas["2"]["title"]) <= 60
     assert metas["2"]["title"].endswith("...")
+    assert metas["2"]["titled"] is False
     assert long_what.startswith(metas["2"]["title"][:-3])
     assert long_what[len(metas["2"]["title"]) - 3] == " "
     assert metas["2"]["what"] == long_what.strip()

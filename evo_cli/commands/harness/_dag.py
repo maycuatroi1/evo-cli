@@ -328,6 +328,7 @@ def plan_step_graph(plan: Plan) -> dict:
                     "status": status,
                     "blocking": bool(entry.get("blocking")),
                     "title": step_title(entry),
+                    "titled": isinstance(authored, str) and bool(authored.strip()),
                     "what": " ".join(str(entry.get("what") or entry.get("issue") or "").split()),
                     "verify": str(entry.get("verify") or ""),
                     "note": " ".join(str(entry.get("note") or "").split()),

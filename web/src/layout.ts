@@ -2,8 +2,8 @@ import dagre from '@dagrejs/dagre'
 import { MarkerType, Position, type Edge, type Node } from '@xyflow/react'
 import type { Graph, GraphEdge, GraphNode } from './types'
 
-const NODE_WIDTH = 216
-const NODE_HEIGHT = 68
+const NODE_WIDTH = 240
+const NODE_HEIGHT = 104
 const TONE_PRIORITY = { idle: 0, ok: 1, active: 2, warn: 3, bad: 4 }
 const EDGE_COLOR = {
   ok: 'var(--ok)',

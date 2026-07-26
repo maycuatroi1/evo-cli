@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import type { Graph, GraphNode } from '../types'
 import { TONE_LABEL, ToneIcon } from './ToneIcon'
 
-const HIDDEN = new Set(['what', 'title', 'role', 'index', 'key'])
+const HIDDEN = new Set(['what', 'title', 'titled', 'role', 'index', 'key'])
 
 function value(input: unknown): string {
   if (Array.isArray(input)) return input.join(', ')
@@ -26,6 +26,7 @@ export function NodeDetail({
   const incoming = graph.edges.filter((edge) => edge.target === node.id)
   const outgoing = graph.edges.filter((edge) => edge.source === node.id)
   const headline = String((node.meta as Record<string, unknown>).what ?? '')
+  const title = String((node.meta as Record<string, unknown>).title ?? '')
 
   const fields = Object.entries(node.meta).filter(
     ([key, entry]) => !HIDDEN.has(key) && entry !== '' && entry !== null && entry !== undefined && entry !== false,
@@ -38,6 +39,7 @@ export function NodeDetail({
           <ToneIcon tone={node.tone} size={15} />
         </span>
         <h3 className="mono">{node.label}</h3>
+        {title && title !== headline ? <span className="detail-title">{title}</span> : null}
         <span className={`chip tone-${node.tone}`}>{String(node.meta.status ?? TONE_LABEL[node.tone])}</span>
         <button className="icon-btn" onClick={onClose} aria-label="Close details">
           <X size={15} aria-hidden />

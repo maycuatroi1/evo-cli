@@ -500,8 +500,8 @@ ul.plain {
 /* ---------- dag node ---------- */
 
 .dagnode {
-  width: 216px;
-  height: 68px;
+  width: 240px;
+  height: 104px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -546,7 +546,7 @@ ul.plain {
 
 .dagnode-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   min-width: 0;
 }
@@ -572,6 +572,12 @@ ul.plain {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+.dagnode-title.is-full {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.35;
 }
 .dagnode[data-kind='step'] .dagnode-title {
   font-weight: 500;
@@ -612,7 +618,7 @@ ul.plain {
   top: 0;
   z-index: 2;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 12px 12px 12px 14px;
   border-bottom: 1px solid var(--border);
@@ -624,6 +630,17 @@ ul.plain {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 0 0 auto;
+}
+.detail-head .detail-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.detail-head .chip {
+  flex: 0 0 auto;
 }
 .detail-head .icon-btn {
   margin-left: auto;
