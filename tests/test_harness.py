@@ -1,5 +1,7 @@
 import importlib
 import json
+import socket
+import struct
 import subprocess
 import threading
 from urllib.request import Request, urlopen
@@ -7,7 +9,7 @@ from urllib.request import Request, urlopen
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
-from evo_cli.commands.harness._server import build_server
+from evo_cli.commands.harness._server import Handler, Server, build_server
 
 # harness/__init__ binds the command object to the name `pull`, shadowing the submodule,
 # so the module has to be fetched by path rather than imported by name.
@@ -173,3 +175,43 @@ def test_serve_complete_plan_moves_file_and_is_idempotent(tmp_path):
     assert completed.read_text(encoding="utf-8") == "id: finish-me\ngoal: Finish this plan\nsteps: []\n"
     assert payload["plan"]["area"] == "completed"
     assert repeated["plan"]["area"] == "completed"
+
+
+def test_serve_stays_quiet_when_a_client_drops_a_keep_alive_connection(tmp_path, capsys):
+    root = tmp_path / "cluster"
+    root.mkdir()
+    manifest = root / "harness.yaml"
+    manifest.write_text("name: test-cluster\nrepos: []\n", encoding="utf-8")
+
+    served = threading.Event()
+
+    class ProbeHandler(Handler):
+        manifest_path = manifest
+
+    class ProbeServer(Server):
+        def shutdown_request(self, request):
+            super().shutdown_request(request)
+            served.set()
+
+    server = ProbeServer(("127.0.0.1", 0), ProbeHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    client = socket.create_connection(("127.0.0.1", server.server_port))
+    try:
+        client.sendall(b"GET /api/state HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        assert client.recv(4096)
+        # RST instead of FIN: the server is left reading a socket that is already gone, the way a
+        # closed browser tab leaves it.
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+    finally:
+        client.close()
+
+    try:
+        assert served.wait(5)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert "Traceback" not in capsys.readouterr().err

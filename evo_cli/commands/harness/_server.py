@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -42,6 +43,8 @@ MISSING_BUNDLE = (
     "it once:\n  cd web && npm install && npm run build"
 )
 
+CONNECTION_LOST = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
 
 def bundle_ready() -> bool:
     return INDEX.is_file()
@@ -60,6 +63,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # noqa: A003 - silence the default stderr access log
         pass
 
+    # A browser that closes a tab, reloads, or drops the SSE stream kills the keep-alive socket
+    # while BaseHTTPRequestHandler is reading the next request line - outside do_GET/do_POST.
+    # Unhandled, socketserver prints a ConnectionAbortedError traceback for every closed tab.
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except CONNECTION_LOST:
+            self.close_connection = True
+
     def do_GET(self):
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
@@ -71,8 +83,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._api(route, query)
             else:
                 self._static(route)
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass
+        except CONNECTION_LOST:
+            self.close_connection = True
         except Exception as exc:  # a dashboard must not die because one plan has broken YAML
             self._json({"error": str(exc)}, status=500)
 
@@ -85,8 +97,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._write_api(route)
             else:
                 self._json({"error": "not found"}, status=404)
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-            pass
+        except CONNECTION_LOST:
+            self.close_connection = True
         except Exception as exc:
             self._json({"error": str(exc)}, status=500)
 
@@ -188,6 +200,12 @@ class Server(ThreadingHTTPServer):
     # requests then go to whichever socket wins. Starting a second `serve` on the same port has
     # to fail loudly instead of appearing to work while the old process answers.
     allow_reuse_address = False
+
+    def handle_error(self, request, client_address):
+        # A client hanging up is normal traffic, not a server fault worth a traceback.
+        if isinstance(sys.exc_info()[1], CONNECTION_LOST):
+            return
+        super().handle_error(request, client_address)
 
 
 def build_server(manifest_path: Path, host: str, port: int) -> ThreadingHTTPServer:
