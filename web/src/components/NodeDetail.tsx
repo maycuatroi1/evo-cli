@@ -3,7 +3,7 @@ import { useMemo } from 'react'
 import type { Graph, GraphNode } from '../types'
 import { TONE_LABEL, ToneIcon } from './ToneIcon'
 
-const HIDDEN = new Set(['what', 'role', 'index', 'key'])
+const HIDDEN = new Set(['what', 'title', 'role', 'index', 'key'])
 
 function value(input: unknown): string {
   if (Array.isArray(input)) return input.join(', ')

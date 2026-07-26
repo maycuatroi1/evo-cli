@@ -9,7 +9,7 @@ export function DagNode({ data, selected }: Props) {
   const { node } = data
   const meta = node.meta as Record<string, string | number | boolean | undefined>
   const isStep = node.kind === 'step'
-  const subtitle = String(meta.what ?? meta.role ?? meta.note ?? '')
+  const subtitle = String(meta.title ?? meta.what ?? meta.role ?? meta.note ?? '')
   const status = String(meta.status ?? '')
 
   return (
