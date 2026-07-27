@@ -207,6 +207,52 @@ to disk and the command warns.
 The same engine backs the `evo-tts` MCP server in
 [agent-skills](https://github.com/maycuatroi1/agent-skills), which gives an agent a `speak` tool.
 
+#### Google Search (SerpApi)
+
+Search Google from the terminal through [SerpApi](https://serpapi.com). One-time setup installs the
+official `serpapi` CLI and stores the key in the omelet credential store:
+
+```bash
+evo setup serp                        # install the CLI + prompt for the key (no echo)
+evo setup serp --from-stdin < key.txt # non-interactive
+evo setup serp --method none          # key only; searches use the HTTPS API
+```
+
+`--method auto` (the default) tries Homebrew first, then falls back to the GitHub release binary
+dropped into `~/.evo/bin`. Homebrew 5 refuses to build from an untrusted third-party tap, so the
+brew path needs `evo setup serp --trust-tap` (which runs `brew trust --formula
+serpapi/tap/serpapi-cli`); without it the fallback fetches the same official binary.
+
+```bash
+evo serp search "evo cli python"                     # top 10 Google results
+evo serp search coffee -l "Austin, Texas" -n 5       # localized
+evo serp search openai -t news --hl vi --gl vn       # news vertical, Vietnamese
+evo serp search "site:github.com serpapi" --links    # only URLs, pipe-friendly
+evo serp search "rust async" -p 3 --json > out.json  # 3 merged pages of raw JSON
+evo serp search x -P tbs=qdr:d                       # any extra SerpApi parameter
+```
+
+`-t` picks the vertical (`web`, `news`, `images`, `videos`, `shopping`, `scholar`). Google treats
+`num` as a hint and often returns more, so the rendered output is capped at what `-n` asked for
+while `--json` / `-o` keep the full payload.
+
+Supporting commands:
+
+```bash
+evo serp account            # plan, searches used and left this month
+evo serp locations Hanoi    # canonical names to pass to --location
+evo serp doctor             # binary, key source (masked), remaining quota
+evo serp raw search --jq '.organic_results[0]' engine=google q=coffee
+```
+
+`search` runs through the `serpapi` binary when it is installed and falls back to the SerpApi HTTPS
+endpoint otherwise, so a machine that only has the key still works (`--transport cli|http|auto`
+forces the choice). The key is resolved from `SERPAPI_KEY`, then `evo cred get serpapi_api_key`,
+then `~/.config/serpapi/config.toml`, and is passed to the binary through the environment - never on
+the command line, where any process listing would show it. `evo setup serp --write-config` writes
+`~/.config/serpapi/config.toml` (mode 600) if you also want the bare `serpapi` binary to
+authenticate on its own.
+
 ## `evo harness` - read a repo cluster
 
 A harness is a repo that describes a *cluster* of repos: `harness.yaml` lists them, `contracts.yaml`

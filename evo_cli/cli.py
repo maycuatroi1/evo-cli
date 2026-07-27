@@ -18,6 +18,7 @@ from evo_cli.commands.miniconda import miniconda
 from evo_cli.commands.netcheck import netcheck
 from evo_cli.commands.opencode import setup_opencode
 from evo_cli.commands.plantuml import plantuml
+from evo_cli.commands.serp import serp_group, setup_serp
 from evo_cli.commands.site2s import site2s
 from evo_cli.commands.ssh import setupssh
 from evo_cli.commands.sysmon import sysmon
@@ -56,6 +57,7 @@ setup_group.add_command(agent_toy)
 setup_group.add_command(setup_claude)
 setup_group.add_command(setup_gh)
 setup_group.add_command(setup_opencode)
+setup_group.add_command(setup_serp)
 setup_group.add_command(miniconda)
 setup_group.add_command(setupssh)
 
@@ -73,6 +75,7 @@ cli.add_command(localproxy)
 cli.add_command(mcp_group)
 cli.add_command(netcheck)
 cli.add_command(plantuml)
+cli.add_command(serp_group)
 cli.add_command(sysmon)
 cli.add_command(tts_group)
 cli.add_command(update)

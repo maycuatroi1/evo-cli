@@ -302,6 +302,17 @@ SPECS = [
         "keys": ["figma_token"],
     },
     {
+        "path": "tools/serpapi.json",
+        "id": "serpapi",
+        "service": "SerpApi",
+        "category": "tools",
+        "type": "api_key",
+        "lifetime": "stable",
+        "description": "SerpApi private API key (evo serp, serpapi CLI)",
+        "rotate": "https://serpapi.com/manage-api-key -> regenerate",
+        "keys": ["serpapi_api_key"],
+    },
+    {
         "path": "tools/openclaw.json",
         "id": "openclaw",
         "service": "OpenClaw gateway",

@@ -1,0 +1,2 @@
+class SerpError(RuntimeError):
+    pass
