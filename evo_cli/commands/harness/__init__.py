@@ -1,6 +1,7 @@
 import rich_click as click
 
 from evo_cli.commands.harness.check import check
+from evo_cli.commands.harness.clone import clone
 from evo_cli.commands.harness.edit import debt, question, repo, step
 from evo_cli.commands.harness.pull import pull
 from evo_cli.commands.harness.serve import serve
@@ -21,9 +22,10 @@ def harness_group():
     evo harness graph <plan>       print a DAG as an adjacency list
     evo harness check <plan>       check what the plan claims against real git
     evo harness step <plan> 3 done mark a step
+    evo harness clone              clone every declared repo into its declared path
     evo harness pull               fast-forward every repo
     """
 
 
-for command in (serve, repos, seams, plans, show, graph, check, step, debt, question, repo, pull):
+for command in (serve, repos, seams, plans, show, graph, check, step, debt, question, repo, clone, pull):
     harness_group.add_command(command)

@@ -71,6 +71,10 @@ def repos(harness_path, with_git):
         grid.add_row(f"[bold]{entry['name']}[/]", entry["role"] or "-", branch, state, one_line(entry["note"], width))
     console.print(grid)
 
+    missing = [entry["name"] for entry in info["repos"] if not entry["present"]]
+    if missing:
+        console.print(f"\n[red]{len(missing)} repo(s) missing[/] - run [accent]evo harness clone[/] to fetch them")
+
     if info["proposals_pending"]:
         console.print(f"\n[yellow]{len(info['proposals_pending'])} pending proposal(s)[/] in proposals/_pending")
 

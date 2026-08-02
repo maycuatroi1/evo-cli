@@ -131,6 +131,21 @@ else has the flat file open.
 
 #### Harness Repositories
 
+Clone every repository a harness manifest declares but this machine does not have yet:
+
+```bash
+evo harness clone
+evo harness clone --dry-run                     # show what lands where, change nothing
+evo harness clone --repo backend --depth 1
+evo harness clone --all                         # include repos marked present: false
+```
+
+Each repo lands on its declared `path`, falling back to `<workspace>/<name>`, so a fresh machine
+ends up with the layout the manifest, the contract seams and the exec-plans already assume. A repo
+already on disk is left alone; if its `origin` is not the remote the manifest names, the summary
+says so instead of touching it. When the manifest names a `branch`, the clone moves onto it, and a
+branch nobody has pushed yet is reported rather than treated as a failure.
+
 Fast-forward every available repository declared in a harness manifest:
 
 ```bash
@@ -271,6 +286,7 @@ evo harness plans      # progress across every exec-plan
 evo harness show <plan>
 evo harness check <plan> [--fetch]      # what the plan claims vs what git says
 evo harness graph <plan>:steps          # the same DAG as an adjacency list
+evo harness clone      # clone every declared repo into its declared path
 evo harness pull       # fast-forward every repo
 ```
 

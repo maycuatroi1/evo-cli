@@ -62,6 +62,10 @@ def load_repos(manifest_path):
             {
                 "name": name,
                 "path": path,
+                # Where the manifest says the repo belongs, whether or not it is there yet.
+                # `path` falls back to the workspace when the declared path is missing, so a
+                # command that creates the checkout has to read this one instead.
+                "declared_path": declared or fallback.resolve(),
                 "present": bool(present) and path.is_dir(),
                 "declared_present": bool(present),
                 "role": str(entry.get("role") or ""),

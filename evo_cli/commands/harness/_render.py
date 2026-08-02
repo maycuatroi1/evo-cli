@@ -85,6 +85,16 @@ def print_graph(title: str, graph: dict) -> None:
         print_warnings(graph["warnings"])
 
 
+def print_summary(results: list) -> None:
+    """One `name  status` line per repo, coloured by the verb the status starts with."""
+    click.echo()
+    click.secho("Summary", bold=True)
+    width = max((len(name) for name, _ in results), default=0)
+    for name, status in results:
+        color = "red" if status.startswith("failed") else "yellow" if status.startswith("skipped") else "green"
+        click.secho(f"  {name:<{width}}  {status}", fg=color)
+
+
 def fail_if(condition: bool) -> None:
     if condition:
         raise click.exceptions.Exit(1)

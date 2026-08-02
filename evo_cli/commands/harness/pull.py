@@ -3,6 +3,7 @@ import shutil
 import rich_click as click
 
 from evo_cli.commands.harness._paths import find_manifest, git, harness_option, load_repos
+from evo_cli.commands.harness._render import print_summary
 
 
 @click.command("pull", help="Fast-forward all available repositories in a harness.")
@@ -34,7 +35,7 @@ def pull(harness_path, repos, prune, dry_run):
             results.append((name, "skipped (present: false)"))
             continue
         if not path.is_dir():
-            results.append((name, f"failed (missing: {path})"))
+            results.append((name, f"failed (missing: {path} - run `evo harness clone`)"))
             incomplete += 1
             continue
 
@@ -64,11 +65,6 @@ def pull(harness_path, repos, prune, dry_run):
         head = git(path, "log", "-1", "--oneline")
         results.append((name, head.stdout.strip() or "updated"))
 
-    click.echo()
-    click.secho("Summary", bold=True)
-    width = max((len(name) for name, _ in results), default=0)
-    for name, status in results:
-        color = "red" if status.startswith("failed") else "yellow" if status.startswith("skipped") else "green"
-        click.secho(f"  {name:<{width}}  {status}", fg=color)
+    print_summary(results)
     if incomplete:
         raise click.exceptions.Exit(1)
