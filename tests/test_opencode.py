@@ -388,3 +388,16 @@ def test_install_opencode_uses_sudo_when_prefix_not_writable(monkeypatch):
     monkeypatch.setattr(opencode, "opencode_version", lambda: next(versions))
     assert opencode.install_opencode("npm") is True
     assert sudo_calls == [["npm", "install", "-g", "opencode-ai@latest"]]
+
+
+def test_verify_mcp_servers_sends_newline_terminated_frame(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["input"] = kwargs.get("input")
+        return _fake_run('{"result":{},"jsonrpc":"2.0","id":1}')
+
+    monkeypatch.setattr(opencode.subprocess, "run", fake_run)
+    opencode.verify_mcp_servers()
+    assert seen["input"].endswith("\n")
+    assert json.loads(seen["input"])["method"] == "initialize"

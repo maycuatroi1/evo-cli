@@ -447,10 +447,13 @@ def configure_opencode_project(project_path):
 def verify_mcp_servers():
     """Run a basic JSON-RPC initialize check against installed MCP servers."""
     step("Verifying MCP servers")
+    # MCP frames stdio messages one per line, so without the trailing newline the
+    # server sees an unterminated frame, exits 0 on EOF and answers nothing -
+    # which read as "server broken" for every server we ever verified.
     init_message = (
         '{"jsonrpc":"2.0","id":1,"method":"initialize",'
         '"params":{"protocolVersion":"2024-11-05","capabilities":{},'
-        '"clientInfo":{"name":"evo-cli","version":"1.0"}}}'
+        '"clientInfo":{"name":"evo-cli","version":"1.0"}}}\n'
     )
     for name, cmd in _local_mcp_commands():
         try:
