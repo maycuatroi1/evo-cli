@@ -1,3 +1,4 @@
+import datetime
 from pathlib import Path
 
 import pytest
@@ -231,3 +232,60 @@ def test_check_fails_without_ytdlp(monkeypatch):
     monkeypatch.setattr(dl, "ytdlp_version", lambda: None)
     result = CliRunner().invoke(cli, ["download", "check"])
     assert result.exit_code != 0
+
+
+def version_released_days_ago(days):
+    released = datetime.date.today() - datetime.timedelta(days=days)
+    return f"{released.year}.{released.month:02d}.{released.day:02d}"
+
+
+def test_recent_ytdlp_is_not_stale():
+    assert dl.ytdlp_stale_age(version_released_days_ago(3)) is None
+
+
+def test_old_ytdlp_reports_its_age():
+    assert dl.ytdlp_stale_age(version_released_days_ago(200)) == 200
+
+
+def test_nightly_ytdlp_build_still_parses():
+    assert dl.ytdlp_stale_age(version_released_days_ago(90) + ".232919") == 90
+
+
+@pytest.mark.parametrize("version", [None, "", "2026", "2026.13.99", "unknown"])
+def test_unparsable_ytdlp_version_is_not_stale(version):
+    assert dl.ytdlp_stale_age(version) is None
+
+
+def test_check_warns_when_ytdlp_is_stale(monkeypatch):
+    monkeypatch.setattr(dl, "ytdlp_version", lambda: version_released_days_ago(200))
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(dl, "find_js_runtime", lambda: ("node", "/usr/bin/node"))
+    result = CliRunner().invoke(cli, ["download", "check"])
+    assert result.exit_code == 0
+    assert "200 days old" in result.output.replace("\n", "")
+
+
+def test_failure_on_stale_ytdlp_points_at_the_update(monkeypatch, tmp_path):
+    class Failed:
+        returncode = 1
+
+    monkeypatch.setattr(dl, "ensure_ytdlp", lambda assume_yes=False: ["yt-dlp"])
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(dl, "ytdlp_version", lambda: version_released_days_ago(200))
+    monkeypatch.setattr(dl, "run_command", lambda *a, **kw: Failed())
+    result = CliRunner().invoke(cli, ["download", YOUTUBE, "-o", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "evo download install" in result.output.replace("\n", "")
+
+
+def test_failure_on_fresh_ytdlp_keeps_the_formats_hint(monkeypatch, tmp_path):
+    class Failed:
+        returncode = 1
+
+    monkeypatch.setattr(dl, "ensure_ytdlp", lambda assume_yes=False: ["yt-dlp"])
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(dl, "ytdlp_version", lambda: version_released_days_ago(3))
+    monkeypatch.setattr(dl, "run_command", lambda *a, **kw: Failed())
+    result = CliRunner().invoke(cli, ["download", YOUTUBE, "-o", str(tmp_path)])
+    assert result.exit_code != 0
+    assert "evo download formats" in result.output.replace("\n", "")

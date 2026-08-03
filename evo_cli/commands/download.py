@@ -1,3 +1,4 @@
+import datetime
 import importlib.util
 import os
 import shutil
@@ -26,6 +27,7 @@ AUDIO_FORMATS = ["mp3", "m4a", "opus", "flac", "wav", "aac", "vorbis", "best"]
 CONTAINERS = ["mp4", "mkv", "webm", "auto"]
 BROWSERS = ["chrome", "edge", "firefox", "brave", "chromium", "opera", "vivaldi", "safari"]
 JS_RUNTIMES = ["deno", "bun", "node"]
+YTDLP_STALE_DAYS = 60
 
 DIRECT_EXTS = {
     ".7z",
@@ -137,6 +139,38 @@ def ytdlp_version():
     return (result.stdout or "").strip() or None
 
 
+def ytdlp_stale_age(version=None):
+    """Days since the installed build was released, or None if it is recent enough.
+
+    Sites like YouTube change their streaming setup every few months, so an old
+    yt-dlp fails with 403s that look like a bug in this command.
+    """
+    if version is None:
+        version = ytdlp_version()
+    if not version:
+        return None
+    parts = version.split(".")[:3]
+    if len(parts) < 3:
+        return None
+    try:
+        released = datetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return None
+    age = (datetime.date.today() - released).days
+    return age if age >= YTDLP_STALE_DAYS else None
+
+
+def warn_if_stale(version=None):
+    if version is None:
+        version = ytdlp_version()
+    age = ytdlp_stale_age(version)
+    if age is None:
+        return False
+    warning(f"yt-dlp {version} is {age} days old: sites change often and old builds start failing with 403s.")
+    info("Update it with `evo download install`.")
+    return True
+
+
 def find_ffmpeg():
     return shutil.which("ffmpeg")
 
@@ -197,6 +231,7 @@ def install_ffmpeg(assume_yes):
 def ensure_ytdlp(assume_yes=False):
     cmd = ytdlp_command()
     if cmd:
+        warn_if_stale()
         return cmd
     warning("yt-dlp is not installed.")
     if not assume_yes and not click.confirm("Install yt-dlp now with pip?", default=True):
@@ -295,11 +330,15 @@ def report_environment():
     table.add_column("Component", style="info", no_wrap=True)
     table.add_column("Status", no_wrap=True)
     table.add_column("Detail", style="dim")
-    table.add_row(
-        "yt-dlp",
-        "[success]ok[/success]" if version else "[error]missing[/error]",
-        version or "run `evo download install`",
-    )
+    age = ytdlp_stale_age(version)
+    if not version:
+        ytdlp_status, ytdlp_detail = "[error]missing[/error]", "run `evo download install`"
+    elif age is not None:
+        ytdlp_status = "[warning]stale[/warning]"
+        ytdlp_detail = f"{version} ({age} days old) - run `evo download install`"
+    else:
+        ytdlp_status, ytdlp_detail = "[success]ok[/success]", version
+    table.add_row("yt-dlp", ytdlp_status, ytdlp_detail)
     table.add_row(
         "ffmpeg",
         "[success]ok[/success]" if ffmpeg else "[error]missing[/error]",
@@ -356,6 +395,10 @@ def do_get(urls, opts, assume_yes):
 
     result = run_command(cmd, check=False)
     if result.returncode != 0:
+        if ytdlp_stale_age() is not None:
+            raise click.ClickException(
+                "yt-dlp failed and the installed build is stale. Run `evo download install`, then try again."
+            )
         raise click.ClickException("yt-dlp failed. Try `evo download formats <url>` to inspect the source.")
     if not opts["list_formats"]:
         success(f"Saved to [accent]{outdir}[/accent]")
@@ -675,8 +718,10 @@ def install_cmd(with_deps, assume_yes):
 def check_cmd():
     step("evo download check")
     report_environment()
-    if not ytdlp_version():
+    version = ytdlp_version()
+    if not version:
         raise click.ClickException("yt-dlp is missing. Run `evo download install`.")
+    warn_if_stale(version)
     if not find_ffmpeg():
         warning("ffmpeg missing: merging and audio conversion will not work.")
         info("Fix it with `evo download install --with-deps`.")
