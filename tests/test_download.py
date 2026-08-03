@@ -92,6 +92,26 @@ def test_output_template_respects_name(tmp_path):
     assert dl.output_template(tmp_path, False, "%(id)s.%(ext)s").endswith("%(id)s.%(ext)s")
 
 
+@pytest.mark.parametrize("playlist", [False, True])
+def test_output_template_caps_the_title(tmp_path, playlist):
+    # A Facebook reel titles itself with its whole caption; uncapped, the file
+    # name overruns the 255-byte limit and yt-dlp dies with "File name too long".
+    template = dl.output_template(tmp_path, playlist, name=None)
+    assert f"%(title).{dl.TITLE_BYTE_LIMIT}B" in template
+    assert "%(title)s" not in template
+
+
+def test_output_template_caps_the_playlist_folder(tmp_path):
+    template = dl.output_template(tmp_path, playlist=True, name=None)
+    assert f"%(playlist_title).{dl.TITLE_BYTE_LIMIT}B" in template
+
+
+def test_title_cap_leaves_room_for_the_suffixes_ytdlp_appends():
+    # yt-dlp downloads to `<name>.f<format_id>.<ext>.part` and the sanitizer
+    # swaps `:` `|` `?` for 3-byte fullwidth twins before any of that.
+    assert dl.TITLE_BYTE_LIMIT + len(".f1049104804294604v.mp4.part") < 255
+
+
 def test_build_args_default(opts):
     args = dl.build_ytdlp_args(opts, has_ffmpeg=True)
     assert "--no-playlist" in args

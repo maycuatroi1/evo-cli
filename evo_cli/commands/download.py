@@ -28,6 +28,12 @@ CONTAINERS = ["mp4", "mkv", "webm", "auto"]
 BROWSERS = ["chrome", "edge", "firefox", "brave", "chromium", "opera", "vivaldi", "safari"]
 JS_RUNTIMES = ["deno", "bun", "node"]
 YTDLP_STALE_DAYS = 60
+# Facebook reels and Instagram posts hand back the whole caption as the title,
+# which walks straight past the 255-byte limit filesystems put on a single path
+# component. `.<N>B` truncates the field to N bytes (before yt-dlp swaps `:` and
+# friends for their fullwidth twins, so leave room for that) and the suffixes
+# yt-dlp tacks on while downloading - `.f<format_id>`, `.mp4`, `.part`.
+TITLE_BYTE_LIMIT = 120
 
 DIRECT_EXTS = {
     ".7z",
@@ -256,12 +262,13 @@ def format_selector(quality, container, has_ffmpeg):
 
 
 def output_template(outdir, playlist, name):
+    title = f"%(title).{TITLE_BYTE_LIMIT}B"
     if name:
         template = name
     elif playlist:
-        template = "%(playlist_title)s/%(playlist_index)03d - %(title)s.%(ext)s"
+        template = f"%(playlist_title).{TITLE_BYTE_LIMIT}B/%(playlist_index)03d - {title}.%(ext)s"
     else:
-        template = "%(title)s.%(ext)s"
+        template = f"{title}.%(ext)s"
     return str(Path(outdir) / template)
 
 
