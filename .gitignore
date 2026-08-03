@@ -137,3 +137,6 @@ dmypy.json
 # command works without Node. Only the build inputs are ignored.
 web/node_modules/
 web/.vite/
+
+# macOS
+.DS_Store
