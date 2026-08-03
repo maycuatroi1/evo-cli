@@ -1,9 +1,11 @@
 import datetime
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -28,6 +30,17 @@ CONTAINERS = ["mp4", "mkv", "webm", "auto"]
 BROWSERS = ["chrome", "edge", "firefox", "brave", "chromium", "opera", "vivaldi", "safari"]
 JS_RUNTIMES = ["deno", "bun", "node"]
 YTDLP_STALE_DAYS = 60
+# Codecs an MP4 is actually expected to carry. Facebook reels and YouTube serve
+# their best streams as VP9 / AV1, and muxing those into MP4 gives a file that
+# QuickTime, Photos and iMovie open with sound but a black picture - the picture
+# is there, macOS just has no VP9 decoder. Anything outside this set gets
+# re-encoded to H.264 so the download plays everywhere.
+PLAYABLE_VCODECS = frozenset({"h264", "hevc", "mpeg4", "mjpeg", "prores"})
+PLAYABLE_ACODECS = frozenset({"aac", "mp3", "ac3", "eac3", "alac"})
+# VP9 and AV1 fit the same picture into fewer bits than H.264 does, so matching
+# the source bitrate would visibly soften the result.
+H264_BITRATE_HEADROOM = 1.5
+MIN_H264_BITRATE = 1_000_000
 # Facebook reels and Instagram posts hand back the whole caption as the title,
 # which walks straight past the 255-byte limit filesystems put on a single path
 # component. `.<N>B` truncates the field to N bytes (before yt-dlp swaps `:` and
@@ -107,6 +120,7 @@ EPILOG = Text.from_markup(
     "  [cyan]evo download <url> --section 10:00-15:00[/cyan]    cut a clip out of a long video\n"
     "  [cyan]evo download <url> -p --archive[/cyan]             whole playlist, skip what you have\n"
     "  [cyan]evo download <url> --cookies chrome[/cyan]         private / age-gated / member-only\n"
+    "  [cyan]evo download <url> --keep-codec[/cyan]             keep VP9 / AV1, skip the H.264 pass\n"
     "  [cyan]evo download formats <url>[/cyan]                  list every available stream\n"
     "  [cyan]evo download check[/cyan]                          verify yt-dlp + ffmpeg\n"
     "  [cyan]evo download sites[/cyan]                          common supported sources\n\n"
@@ -191,6 +205,137 @@ def ffmpeg_version():
         return None
     first = ((result.stdout or "") + (result.stderr or "")).strip().splitlines()
     return first[0] if first else None
+
+
+def find_ffprobe():
+    return shutil.which("ffprobe")
+
+
+def probe_media(path):
+    """Codecs and bitrate of `path`, or None when ffprobe cannot read it."""
+    exe = find_ffprobe()
+    if not exe:
+        return None
+    cmd = [
+        exe,
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type,codec_name,bit_rate:format=bit_rate,duration",
+        "-of",
+        "json",
+        str(path),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        probed = json.loads(result.stdout or "{}")
+    except ValueError:
+        return None
+
+    streams = probed.get("streams") or []
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    if not video:
+        return None
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    return {
+        "vcodec": video.get("codec_name"),
+        "acodec": audio.get("codec_name") if audio else None,
+        "vbitrate": int_or_none(video.get("bit_rate")) or int_or_none(probed.get("format", {}).get("bit_rate")),
+    }
+
+
+def int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def h264_encoder():
+    """The fastest H.264 encoder available. VideoToolbox is hardware-backed and
+    always present on macOS; elsewhere the software encoder is the safe bet,
+    since an nvenc/qsv build only works when the matching GPU is there too."""
+    if sys.platform == "darwin":
+        exe = find_ffmpeg()
+        try:
+            result = subprocess.run([exe, "-v", "error", "-encoders"], capture_output=True, text=True)
+        except OSError:
+            return "libx264"
+        if "h264_videotoolbox" in (result.stdout or ""):
+            return "h264_videotoolbox"
+    return "libx264"
+
+
+def transcode_args(source, target, encoder, media):
+    # `-map 0` keeps every stream and the embedded metadata; only the video
+    # track goes through the encoder, the rest is copied as-is.
+    args = [find_ffmpeg(), "-v", "warning", "-stats", "-y", "-i", str(source), "-map", "0"]
+    args += ["-c:v", encoder, "-pix_fmt", "yuv420p"]
+    if encoder == "libx264":
+        args += ["-crf", "20", "-preset", "veryfast"]
+    else:
+        bitrate = media.get("vbitrate")
+        target_bitrate = max(int(bitrate * H264_BITRATE_HEADROOM), MIN_H264_BITRATE) if bitrate else MIN_H264_BITRATE
+        args += ["-b:v", str(target_bitrate)]
+    if media.get("acodec") in PLAYABLE_ACODECS:
+        args += ["-c:a", "copy"]
+    else:
+        args += ["-c:a", "aac", "-b:a", "192k"]
+    args += ["-c:s", "copy", "-movflags", "+faststart", str(target)]
+    return args
+
+
+def make_playable(path):
+    """Re-encode `path` to H.264 when its video codec is one MP4 players choke on.
+
+    Returns True when the file was converted, False when it was already fine or
+    the conversion did not work out (in which case the download is left alone).
+    """
+    path = Path(path)
+    if not path.is_file():
+        return False
+    media = probe_media(path)
+    if not media or media["vcodec"] in PLAYABLE_VCODECS:
+        return False
+
+    warning(f"{path.name}: {media['vcodec']} in MP4 does not play in QuickTime / Photos.")
+    # A short temp name next to the download: the title can already be near the
+    # file name limit, and os.replace is only atomic within one filesystem.
+    target = path.with_name(f".evo-recode-{os.getpid()}{path.suffix}")
+    encoder = h264_encoder()
+    info(f"Converting to H.264 with [accent]{encoder}[/accent] (keeps the resolution).")
+    result = run_command(transcode_args(path, target, encoder, media), check=False)
+    if result.returncode != 0 and encoder != "libx264":
+        warning(f"{encoder} failed, retrying with libx264.")
+        encoder = "libx264"
+        result = run_command(transcode_args(path, target, encoder, media), check=False)
+    if result.returncode != 0 or not target.is_file():
+        target.unlink(missing_ok=True)
+        warning("Conversion failed. Keeping the original file - play it with VLC or IINA.")
+        return False
+
+    os.replace(target, path)
+    success(f"Converted [accent]{path.name}[/accent] to H.264.")
+    return True
+
+
+def downloaded_paths(manifest):
+    """Files yt-dlp reported writing, deduplicated and in order."""
+    try:
+        lines = Path(manifest).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    seen = {}
+    for line in lines:
+        line = line.strip()
+        if line:
+            seen[line] = None
+    return list(seen)
 
 
 def find_js_runtime():
@@ -282,7 +427,7 @@ def direct_filename(url):
     return name or "download.bin"
 
 
-def build_ytdlp_args(opts, has_ffmpeg):
+def build_ytdlp_args(opts, has_ffmpeg, manifest=None):
     args = []
     runtime, _ = find_js_runtime()
     if runtime and runtime != "deno":
@@ -293,6 +438,8 @@ def build_ytdlp_args(opts, has_ffmpeg):
         return args
 
     args += ["-o", output_template(opts["outdir"], opts["playlist"], opts["name"])]
+    if manifest:
+        args += ["--print-to-file", "after_move:filepath", str(manifest)]
     args += ["--no-playlist"] if not opts["playlist"] else ["--yes-playlist"]
     args += ["-N", str(opts["concurrent"])]
 
@@ -326,6 +473,21 @@ def build_ytdlp_args(opts, has_ffmpeg):
     if opts["limit_rate"]:
         args += ["-r", opts["limit_rate"]]
     return args
+
+
+def wants_playable_output(opts, has_ffmpeg):
+    """Whether the H.264 conversion applies to this run.
+
+    Only for MP4, the container people pick precisely because it plays
+    everywhere - `-c auto` / `webm` / `mkv` mean the codec was not the point.
+    """
+    return (
+        has_ffmpeg
+        and not opts["keep_codec"]
+        and not opts["audio_only"]
+        and not opts["list_formats"]
+        and opts["container"] == "mp4"
+    )
 
 
 def report_environment():
@@ -395,18 +557,29 @@ def do_get(urls, opts, assume_yes):
         warning("ffmpeg not found: falling back to single-file streams (lower quality).")
         info("Install it with `evo download install --with-deps` for the best quality.")
 
-    cmd = exe + build_ytdlp_args(opts, has_ffmpeg) + list(media)
+    recoding = wants_playable_output(opts, has_ffmpeg)
+    manifest = Path(tempfile.mkdtemp(prefix="evo-download-")) / "files.txt" if recoding else None
+
+    cmd = exe + build_ytdlp_args(opts, has_ffmpeg, manifest) + list(media)
     if opts["dry_run"]:
         console.print(f"[cmd]$ {escape(' '.join(cmd))}[/cmd]")
         return
 
-    result = run_command(cmd, check=False)
-    if result.returncode != 0:
-        if ytdlp_stale_age() is not None:
-            raise click.ClickException(
-                "yt-dlp failed and the installed build is stale. Run `evo download install`, then try again."
-            )
-        raise click.ClickException("yt-dlp failed. Try `evo download formats <url>` to inspect the source.")
+    try:
+        result = run_command(cmd, check=False)
+        if result.returncode != 0:
+            if ytdlp_stale_age() is not None:
+                raise click.ClickException(
+                    "yt-dlp failed and the installed build is stale. Run `evo download install`, then try again."
+                )
+            raise click.ClickException("yt-dlp failed. Try `evo download formats <url>` to inspect the source.")
+        if manifest:
+            for path in downloaded_paths(manifest):
+                make_playable(path)
+    finally:
+        if manifest:
+            shutil.rmtree(manifest.parent, ignore_errors=True)
+
     if not opts["list_formats"]:
         success(f"Saved to [accent]{outdir}[/accent]")
 
@@ -492,6 +665,11 @@ def get_options(func):
             "--ascii", "ascii_names", is_flag=True, help="Restrict filenames to ASCII (no spaces or diacritics)."
         ),
         click.option(
+            "--keep-codec",
+            is_flag=True,
+            help="Keep the codec the site served instead of converting VP9 / AV1 to H.264.",
+        ),
+        click.option(
             "-N", "--concurrent", type=int, default=4, show_default=True, help="Fragments to download in parallel."
         ),
         click.option("-r", "--limit-rate", default=None, metavar="RATE", help="Cap the download speed, e.g. `2M`."),
@@ -524,6 +702,7 @@ def collect_opts(
     name,
     dry_run,
     list_formats=False,
+    keep_codec=False,
 ):
     return {
         "outdir": Path(outdir) if outdir else default_output_dir(),
@@ -545,6 +724,7 @@ def collect_opts(
         "name": name,
         "dry_run": dry_run,
         "list_formats": list_formats,
+        "keep_codec": keep_codec,
     }
 
 
@@ -577,6 +757,7 @@ def get_cmd(
     archive,
     section,
     ascii_names,
+    keep_codec,
     concurrent,
     limit_rate,
     name,
@@ -603,6 +784,7 @@ def get_cmd(
         limit_rate,
         name,
         dry_run,
+        keep_codec=keep_codec,
     )
     do_get(list(urls), opts, assume_yes)
 

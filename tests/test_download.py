@@ -1,4 +1,5 @@
 import datetime
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -110,6 +111,130 @@ def test_title_cap_leaves_room_for_the_suffixes_ytdlp_appends():
     # yt-dlp downloads to `<name>.f<format_id>.<ext>.part` and the sanitizer
     # swaps `:` `|` `?` for 3-byte fullwidth twins before any of that.
     assert dl.TITLE_BYTE_LIMIT + len(".f1049104804294604v.mp4.part") < 255
+
+
+def test_build_args_records_what_it_downloaded(opts, tmp_path):
+    args = dl.build_ytdlp_args(opts, has_ffmpeg=True, manifest=tmp_path / "files.txt")
+    assert args[args.index("--print-to-file") + 1] == "after_move:filepath"
+    assert args[args.index("--print-to-file") + 2] == str(tmp_path / "files.txt")
+
+
+def test_build_args_without_manifest_stays_quiet(opts):
+    assert "--print-to-file" not in dl.build_ytdlp_args(opts, has_ffmpeg=True)
+
+
+def test_downloaded_paths_drops_blanks_and_repeats(tmp_path):
+    manifest = tmp_path / "files.txt"
+    manifest.write_text("/a.mp4\n\n/b.mp4\n/a.mp4\n", encoding="utf-8")
+    assert dl.downloaded_paths(manifest) == ["/a.mp4", "/b.mp4"]
+
+
+def test_downloaded_paths_survives_a_missing_manifest(tmp_path):
+    assert dl.downloaded_paths(tmp_path / "nope.txt") == []
+
+
+def test_mp4_downloads_get_the_h264_pass(opts):
+    assert dl.wants_playable_output(opts, has_ffmpeg=True) is True
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [("keep_codec", True), ("audio_only", True), ("list_formats", True), ("container", "webm")],
+)
+def test_h264_pass_is_skipped_when_it_does_not_apply(opts, key, value):
+    opts[key] = value
+    assert dl.wants_playable_output(opts, has_ffmpeg=True) is False
+
+
+def test_h264_pass_needs_ffmpeg(opts):
+    assert dl.wants_playable_output(opts, has_ffmpeg=False) is False
+
+
+def test_transcode_keeps_a_playable_audio_track(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "ffmpeg")
+    args = dl.transcode_args(tmp_path / "in.mp4", tmp_path / "out.mp4", "libx264", {"acodec": "aac"})
+    assert args[args.index("-c:v") + 1] == "libx264"
+    assert args[args.index("-c:a") + 1] == "copy"
+    assert "-crf" in args
+
+
+def test_transcode_re_encodes_an_unplayable_audio_track(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "ffmpeg")
+    args = dl.transcode_args(tmp_path / "in.mp4", tmp_path / "out.mp4", "libx264", {"acodec": "opus"})
+    assert args[args.index("-c:a") + 1] == "aac"
+
+
+def test_hardware_encoder_gets_a_bitrate_instead_of_a_crf(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "ffmpeg")
+    media = {"acodec": "aac", "vbitrate": 2_000_000}
+    args = dl.transcode_args(tmp_path / "in.mp4", tmp_path / "out.mp4", "h264_videotoolbox", media)
+    # H.264 needs more bits than VP9 for the same picture.
+    assert args[args.index("-b:v") + 1] == str(int(2_000_000 * dl.H264_BITRATE_HEADROOM))
+    assert "-crf" not in args
+
+
+def test_hardware_encoder_falls_back_to_a_floor_bitrate(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "ffmpeg")
+    args = dl.transcode_args(tmp_path / "in.mp4", tmp_path / "out.mp4", "h264_videotoolbox", {"acodec": "aac"})
+    assert args[args.index("-b:v") + 1] == str(dl.MIN_H264_BITRATE)
+
+
+def test_playable_codec_is_left_alone(monkeypatch, tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"data")
+    monkeypatch.setattr(dl, "probe_media", lambda path: {"vcodec": "h264", "acodec": "aac", "vbitrate": 1})
+    assert dl.make_playable(video) is False
+    assert video.read_bytes() == b"data"
+
+
+def test_vp9_is_converted_in_place(monkeypatch, tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"vp9 data")
+    monkeypatch.setattr(dl, "probe_media", lambda path: {"vcodec": "vp9", "acodec": "aac", "vbitrate": 1})
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(dl, "h264_encoder", lambda: "libx264")
+
+    def fake_ffmpeg(cmd, check=True):
+        Path(cmd[-1]).write_bytes(b"h264 data")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(dl, "run_command", fake_ffmpeg)
+    assert dl.make_playable(video) is True
+    assert video.read_bytes() == b"h264 data"
+    assert list(tmp_path.iterdir()) == [video]
+
+
+def test_a_failed_conversion_keeps_the_download(monkeypatch, tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"vp9 data")
+    monkeypatch.setattr(dl, "probe_media", lambda path: {"vcodec": "vp9", "acodec": "aac", "vbitrate": 1})
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(dl, "h264_encoder", lambda: "libx264")
+    monkeypatch.setattr(dl, "run_command", lambda cmd, check=True: subprocess.CompletedProcess(cmd, 1))
+    assert dl.make_playable(video) is False
+    assert video.read_bytes() == b"vp9 data"
+    assert list(tmp_path.iterdir()) == [video]
+
+
+def test_hardware_encoder_failure_retries_in_software(monkeypatch, tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"vp9 data")
+    monkeypatch.setattr(dl, "probe_media", lambda path: {"vcodec": "vp9", "acodec": "aac", "vbitrate": 1})
+    monkeypatch.setattr(dl, "find_ffmpeg", lambda: "ffmpeg")
+    monkeypatch.setattr(dl, "h264_encoder", lambda: "h264_videotoolbox")
+    attempts = []
+
+    def flaky_ffmpeg(cmd, check=True):
+        encoder = cmd[cmd.index("-c:v") + 1]
+        attempts.append(encoder)
+        if encoder == "h264_videotoolbox":
+            return subprocess.CompletedProcess(cmd, 1)
+        Path(cmd[-1]).write_bytes(b"h264 data")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(dl, "run_command", flaky_ffmpeg)
+    assert dl.make_playable(video) is True
+    assert attempts == ["h264_videotoolbox", "libx264"]
 
 
 def test_build_args_default(opts):
