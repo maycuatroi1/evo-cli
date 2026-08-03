@@ -299,25 +299,65 @@ def test_install_node_linux_uses_nodesource_on_apt(monkeypatch, tmp_path):
     opencode.install_node_linux()
     assert f"setup_{opencode.NODESOURCE_MAJOR}.x" in downloaded[0]
     assert commands[0][0] == "bash"
-    assert commands[1] == ["apt-get", "install", "-y", "nodejs"]
+    assert commands[1][-4:] == ["apt-get", "install", "-y", "nodejs"]
 
 
-def test_install_node_linux_removes_conflicting_npm(monkeypatch, tmp_path):
-    monkeypatch.setattr(opencode.shutil, "which", lambda name: "/usr/bin/apt-get" if name == "apt-get" else None)
+def test_install_node_apt_removes_conflicting_packages(monkeypatch, tmp_path):
     monkeypatch.setattr(opencode.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(opencode, "download_file", lambda url, dest, description=None: None)
+    monkeypatch.setattr(opencode, "installed_apt_packages", lambda names: ["npm", "libnode-dev"])
     commands = []
+    failed = []
 
     def fake_sudo(cmd, **kwargs):
         cmd = list(cmd)
         commands.append(cmd)
-        if cmd[:4] == ["apt-get", "install", "-y", "nodejs"] and commands.count(cmd) == 1:
-            raise opencode.CommandError("conflict")
+        if cmd[-4:] == ["apt-get", "install", "-y", "nodejs"] and not failed:
+            failed.append(True)
+            raise opencode.CommandError("dpkg refused to overwrite libnode-dev files")
 
     monkeypatch.setattr(opencode, "run_sudo_command", fake_sudo)
-    opencode.install_node_linux()
-    assert ["apt-get", "remove", "-y", "npm"] in commands
-    assert commands[-1] == ["apt-get", "install", "-y", "nodejs"]
+    opencode.install_node_apt()
+    assert commands[2][-5:] == ["apt-get", "remove", "-y", "npm", "libnode-dev"]
+    assert commands[-1][-4:] == ["apt-get", "install", "-y", "nodejs"]
+
+
+def test_install_node_apt_reraises_without_conflicts(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(opencode, "download_file", lambda url, dest, description=None: None)
+    monkeypatch.setattr(opencode, "installed_apt_packages", lambda names: [])
+
+    def fake_sudo(cmd, **kwargs):
+        if list(cmd)[-4:] == ["apt-get", "install", "-y", "nodejs"]:
+            raise opencode.CommandError("apt broke for some other reason")
+
+    monkeypatch.setattr(opencode, "run_sudo_command", fake_sudo)
+    with pytest.raises(opencode.CommandError, match="some other reason"):
+        opencode.install_node_apt()
+
+
+def test_installed_apt_packages_filters_missing(monkeypatch):
+    statuses = {"npm": "install ok installed", "libnode-dev": "deinstall ok config-files"}
+
+    def fake_run(cmd, **kwargs):
+        name = cmd[-1]
+        if name not in statuses:
+            return _fake_run("", returncode=1)
+        return _fake_run(statuses[name])
+
+    monkeypatch.setattr(opencode.subprocess, "run", fake_run)
+    assert opencode.installed_apt_packages(["npm", "libnode-dev", "nodejs-doc"]) == ["npm"]
+
+
+def test_apt_get_is_noninteractive():
+    assert opencode.apt_get("install", "-y", "nodejs") == [
+        "env",
+        "DEBIAN_FRONTEND=noninteractive",
+        "apt-get",
+        "install",
+        "-y",
+        "nodejs",
+    ]
 
 
 def test_npm_global_needs_sudo_when_prefix_not_writable(monkeypatch, tmp_path):

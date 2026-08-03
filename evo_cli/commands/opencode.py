@@ -50,6 +50,11 @@ EXA_ENV_VAR = "OPENCODE_ENABLE_EXA"
 MIN_NODE_MAJOR = 20
 NODESOURCE_MAJOR = 22
 
+# Debian/Ubuntu split Node across several packages while NodeSource ships one
+# that owns all of those files, so any leftover apt package makes dpkg refuse to
+# unpack the new nodejs ("trying to overwrite ... also in package libnode-dev").
+APT_NODE_CONFLICTS = ("npm", "libnode-dev", "nodejs-doc")
+
 
 def _local_mcp_commands():
     """Commands for the local (stdio) servers in DEFAULT_MCP_SERVERS."""
@@ -95,41 +100,81 @@ def node_major_version():
     return int(head) if head.isdigit() else None
 
 
-def install_node_linux():
-    """Install a current Node.js LTS on Linux.
+def installed_apt_packages(names):
+    """Return the subset of names that dpkg reports as currently installed."""
+    installed = []
+    for name in names:
+        try:
+            result = subprocess.run(
+                resolve_executable(["dpkg-query", "-W", "-f=${Status}", name]),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+        except Exception:
+            continue
+        if result.returncode == 0 and "install ok installed" in (result.stdout or ""):
+            installed.append(name)
+    return installed
+
+
+def apt_get(*args):
+    """An apt-get command that never stops to ask a question on a dumb terminal."""
+    return ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", *args]
+
+
+def install_node_apt():
+    """Install a current Node.js LTS from NodeSource on Debian/Ubuntu.
 
     apt's own nodejs package is Node 12 on Ubuntu 22.04, far below what OpenCode
     and Playwright accept, so take the NodeSource repository instead of apt
-    universe. Other package managers ship recent enough Node to use directly.
+    universe.
     """
-    if shutil.which("apt-get"):
-        setup_script = Path(tempfile.gettempdir()) / f"nodesource_setup_{NODESOURCE_MAJOR}.sh"
-        download_file(
-            f"https://deb.nodesource.com/setup_{NODESOURCE_MAJOR}.x",
-            setup_script,
-            description=f"Fetching NodeSource {NODESOURCE_MAJOR}.x setup",
-        )
+    setup_script = Path(tempfile.gettempdir()) / f"nodesource_setup_{NODESOURCE_MAJOR}.sh"
+    download_file(
+        f"https://deb.nodesource.com/setup_{NODESOURCE_MAJOR}.x",
+        setup_script,
+        description=f"Fetching NodeSource {NODESOURCE_MAJOR}.x setup",
+    )
+    run_sudo_command(
+        ["bash", str(setup_script)],
+        status=f"Adding NodeSource Node {NODESOURCE_MAJOR} repository",
+        timeout=900,
+    )
+    try:
         run_sudo_command(
-            ["bash", str(setup_script)],
-            status=f"Adding NodeSource Node {NODESOURCE_MAJOR} repository",
+            apt_get("install", "-y", "nodejs"),
+            status=f"Installing Node.js {NODESOURCE_MAJOR}",
             timeout=900,
         )
-        try:
-            run_sudo_command(
-                ["apt-get", "install", "-y", "nodejs"],
-                status=f"Installing Node.js {NODESOURCE_MAJOR}",
-                timeout=900,
-            )
-        except CommandError:
-            # NodeSource's nodejs bundles npm and conflicts with apt's separate
-            # npm package, which blocks the install until that one is gone.
-            info("Removing apt's npm package, which conflicts with NodeSource nodejs")
-            run_sudo_command(["apt-get", "remove", "-y", "npm"], status="Removing apt npm", timeout=600)
-            run_sudo_command(
-                ["apt-get", "install", "-y", "nodejs"],
-                status=f"Installing Node.js {NODESOURCE_MAJOR}",
-                timeout=900,
-            )
+        return
+    except CommandError:
+        conflicts = installed_apt_packages(APT_NODE_CONFLICTS)
+        if not conflicts:
+            raise
+        info(f"Removing apt packages that conflict with NodeSource nodejs: {', '.join(conflicts)}")
+        run_sudo_command(
+            apt_get("remove", "-y", *conflicts),
+            status="Removing conflicting apt packages",
+            timeout=600,
+        )
+    run_sudo_command(
+        apt_get("install", "-y", "nodejs"),
+        status=f"Installing Node.js {NODESOURCE_MAJOR}",
+        timeout=900,
+    )
+
+
+def install_node_linux():
+    """Install a current Node.js LTS on Linux.
+
+    Only Debian/Ubuntu needs the NodeSource detour; the other package managers
+    ship a recent enough Node to use directly.
+    """
+    if shutil.which("apt-get"):
+        install_node_apt()
         return
     if shutil.which("dnf"):
         run_sudo_command(["dnf", "install", "-y", "nodejs", "npm"], status="Installing nodejs and npm", timeout=900)
