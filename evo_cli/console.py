@@ -1,3 +1,5 @@
+import getpass
+import os
 import shutil
 import subprocess
 import sys
@@ -70,6 +72,78 @@ def resolve_executable(cmd):
         if resolved:
             cmd[0] = resolved
     return cmd
+
+
+SUDO_PASSWORD_ENV = "EVO_SUDO_PASSWORD"
+
+_SUDO_PRIMED = False
+
+
+def is_root():
+    geteuid = getattr(os, "geteuid", None)
+    return geteuid is not None and geteuid() == 0
+
+
+def _sudo_credentials_cached():
+    result = subprocess.run(
+        resolve_executable(["sudo", "-n", "true"]),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.returncode == 0
+
+
+def ensure_sudo():
+    """Prime sudo's credential cache so later sudo calls never block on a prompt.
+
+    Long-running steps run with their output captured, which also swallows the
+    password prompt sudo writes to the terminal: the command looks frozen while
+    sudo waits on input nobody can see. Authenticate up front instead - from
+    EVO_SUDO_PASSWORD or an explicit prompt - and fail loudly when there is no
+    way to ask, rather than hanging forever.
+    """
+    global _SUDO_PRIMED
+    if is_root() or _SUDO_PRIMED:
+        return True
+    if not shutil.which("sudo"):
+        raise CommandError("sudo is required for this step but is not installed")
+    if _sudo_credentials_cached():
+        _SUDO_PRIMED = True
+        return True
+
+    password = os.environ.get(SUDO_PASSWORD_ENV)
+    if not password and sys.stdin.isatty():
+        info(f"sudo password required for user [accent]{getpass.getuser()}[/accent]")
+        password = getpass.getpass("[sudo] password: ")
+    if not password:
+        raise CommandError(
+            "sudo needs a password and none is available: run this in a terminal, "
+            f"export {SUDO_PASSWORD_ENV}, or pre-authenticate with `sudo -v`"
+        )
+
+    result = subprocess.run(
+        resolve_executable(["sudo", "-S", "-p", "", "-v"]),
+        input=password + "\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise CommandError("sudo authentication failed")
+    _SUDO_PRIMED = True
+    return True
+
+
+def run_sudo_command(cmd, **kwargs):
+    """Run a command as root with sudo's credential cache already primed."""
+    cmd = [str(part) for part in cmd]
+    if is_root():
+        return run_command(cmd, **kwargs)
+    ensure_sudo()
+    return run_command(["sudo", "-n", *cmd], **kwargs)
 
 
 def run_command(cmd, capture=False, check=True, input_text=None, status=None, timeout=None, stdin=None):

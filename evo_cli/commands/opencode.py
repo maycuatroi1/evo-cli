@@ -5,13 +5,26 @@ import os
 import platform
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import rich_click as click
 from rich.panel import Panel
 from rich.text import Text
 
-from evo_cli.console import console, error, info, resolve_executable, run_command, step, success, warning
+from evo_cli.console import (
+    CommandError,
+    console,
+    download_file,
+    error,
+    info,
+    resolve_executable,
+    run_command,
+    run_sudo_command,
+    step,
+    success,
+    warning,
+)
 from evo_cli.mcp_registry import opencode_servers
 
 EPILOG = Text.from_markup(
@@ -30,6 +43,12 @@ DEFAULT_MCP_SERVERS = opencode_servers("playwright")
 # OpenCode's built-in `websearch` tool only activates for the OpenCode provider or
 # when this env var is truthy, so custom providers need it set explicitly.
 EXA_ENV_VAR = "OPENCODE_ENABLE_EXA"
+
+# Playwright refuses to run below Node 20 and OpenCode needs 18+, so 20 is the
+# floor for the whole setup. Debian/Ubuntu still ship Node 12 in universe, which
+# satisfies a plain `which node` check while breaking every step that follows.
+MIN_NODE_MAJOR = 20
+NODESOURCE_MAJOR = 22
 
 
 def _local_mcp_commands():
@@ -57,73 +76,120 @@ def get_global_config_path():
     return directory / "opencode.jsonc"
 
 
-def ensure_node_installed():
-    """Ensure Node.js and npm are available; return their paths."""
-    node_cmd = shutil.which("node")
-    npm_cmd = shutil.which("npm")
-    npx_cmd = shutil.which("npx")
-
-    if node_cmd and npm_cmd and npx_cmd:
+def node_major_version():
+    """Return the installed Node.js major version as an int, or None."""
+    if not shutil.which("node"):
+        return None
+    try:
         result = subprocess.run(
             resolve_executable(["node", "--version"]),
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            check=True,
+            timeout=30,
         )
-        info(f"Node.js found: {result.stdout.strip()}")
+    except Exception:
+        return None
+    head = (result.stdout or "").strip().lstrip("v").split(".")[0]
+    return int(head) if head.isdigit() else None
+
+
+def install_node_linux():
+    """Install a current Node.js LTS on Linux.
+
+    apt's own nodejs package is Node 12 on Ubuntu 22.04, far below what OpenCode
+    and Playwright accept, so take the NodeSource repository instead of apt
+    universe. Other package managers ship recent enough Node to use directly.
+    """
+    if shutil.which("apt-get"):
+        setup_script = Path(tempfile.gettempdir()) / f"nodesource_setup_{NODESOURCE_MAJOR}.sh"
+        download_file(
+            f"https://deb.nodesource.com/setup_{NODESOURCE_MAJOR}.x",
+            setup_script,
+            description=f"Fetching NodeSource {NODESOURCE_MAJOR}.x setup",
+        )
+        run_sudo_command(
+            ["bash", str(setup_script)],
+            status=f"Adding NodeSource Node {NODESOURCE_MAJOR} repository",
+            timeout=900,
+        )
+        try:
+            run_sudo_command(
+                ["apt-get", "install", "-y", "nodejs"],
+                status=f"Installing Node.js {NODESOURCE_MAJOR}",
+                timeout=900,
+            )
+        except CommandError:
+            # NodeSource's nodejs bundles npm and conflicts with apt's separate
+            # npm package, which blocks the install until that one is gone.
+            info("Removing apt's npm package, which conflicts with NodeSource nodejs")
+            run_sudo_command(["apt-get", "remove", "-y", "npm"], status="Removing apt npm", timeout=600)
+            run_sudo_command(
+                ["apt-get", "install", "-y", "nodejs"],
+                status=f"Installing Node.js {NODESOURCE_MAJOR}",
+                timeout=900,
+            )
+        return
+    if shutil.which("dnf"):
+        run_sudo_command(["dnf", "install", "-y", "nodejs", "npm"], status="Installing nodejs and npm", timeout=900)
+        return
+    if shutil.which("pacman"):
+        run_sudo_command(
+            ["pacman", "-Sy", "--noconfirm", "nodejs", "npm"],
+            status="Installing nodejs and npm",
+            timeout=900,
+        )
+        return
+    if shutil.which("apk"):
+        run_sudo_command(["apk", "add", "nodejs", "npm"], status="Installing nodejs and npm", timeout=900)
+        return
+    raise RuntimeError("No supported package manager found (apt-get, dnf, pacman, apk)")
+
+
+def ensure_node_installed():
+    """Ensure Node.js >= MIN_NODE_MAJOR and npm are available; return their paths."""
+    node_cmd = shutil.which("node")
+    npm_cmd = shutil.which("npm")
+    npx_cmd = shutil.which("npx")
+    major = node_major_version()
+
+    if node_cmd and npm_cmd and npx_cmd and major is not None and major >= MIN_NODE_MAJOR:
+        info(f"Node.js found: v{major}")
         return node_cmd, npm_cmd, npx_cmd
 
-    info("Node.js/npm not found. Installing via package manager...")
-    system = platform.system()
-    if system == "Linux":
-        try:
-            if shutil.which("apt-get"):
-                run_command(
-                    ["sudo", "apt-get", "update"],
-                    status="Updating apt package lists",
-                )
-                run_command(
-                    ["sudo", "apt-get", "install", "-y", "nodejs", "npm"],
-                    status="Installing nodejs and npm",
-                )
-            elif shutil.which("dnf"):
-                run_command(
-                    ["sudo", "dnf", "install", "-y", "nodejs", "npm"],
-                    status="Installing nodejs and npm",
-                )
-            elif shutil.which("pacman"):
-                run_command(
-                    ["sudo", "pacman", "-Sy", "--noconfirm", "nodejs", "npm"],
-                    status="Installing nodejs and npm",
-                )
-            elif shutil.which("apk"):
-                run_command(
-                    ["sudo", "apk", "add", "nodejs", "npm"],
-                    status="Installing nodejs and npm",
-                )
-            else:
-                raise RuntimeError("No supported package manager found (apt-get, dnf, pacman, apk)")
-        except Exception as exc:
-            error(f"Could not install Node.js automatically: {exc}")
-            info("Please install Node.js 18+ manually from https://nodejs.org/")
-            raise
-    elif system == "Darwin":
-        if shutil.which("brew"):
-            run_command(["brew", "install", "node"], status="Installing Node.js via Homebrew")
-        else:
-            raise RuntimeError("Homebrew not found. Please install Node.js 18+ manually.")
-    elif system == "Windows":
-        raise RuntimeError("Please install Node.js 18+ manually from https://nodejs.org/")
+    if major is not None and major < MIN_NODE_MAJOR:
+        warning(f"Node.js v{major} is too old; OpenCode and Playwright need v{MIN_NODE_MAJOR}+")
+        info(f"Upgrading to Node.js {NODESOURCE_MAJOR} LTS")
     else:
-        raise RuntimeError(f"Unsupported platform: {system}")
+        info("Node.js/npm not found. Installing via package manager...")
+
+    system = platform.system()
+    try:
+        if system == "Linux":
+            install_node_linux()
+        elif system == "Darwin":
+            if not shutil.which("brew"):
+                raise RuntimeError(f"Homebrew not found. Please install Node.js {MIN_NODE_MAJOR}+ manually.")
+            run_command(["brew", "install", "node"], status="Installing Node.js via Homebrew", timeout=900)
+        elif system == "Windows":
+            raise RuntimeError(f"Please install Node.js {MIN_NODE_MAJOR}+ manually from https://nodejs.org/")
+        else:
+            raise RuntimeError(f"Unsupported platform: {system}")
+    except Exception as exc:
+        error(f"Could not install Node.js automatically: {exc}")
+        info(f"Please install Node.js {MIN_NODE_MAJOR}+ manually from https://nodejs.org/")
+        raise
 
     node_cmd = shutil.which("node")
     npm_cmd = shutil.which("npm")
     npx_cmd = shutil.which("npx")
     if not (node_cmd and npm_cmd and npx_cmd):
         raise RuntimeError("Node.js installation succeeded but binaries are not on PATH")
+    major = node_major_version()
+    if major is None or major < MIN_NODE_MAJOR:
+        raise RuntimeError(f"Node.js v{major} is still below the required v{MIN_NODE_MAJOR}")
+    success(f"Node.js v{major} installed")
     return node_cmd, npm_cmd, npx_cmd
 
 
@@ -184,6 +250,30 @@ def opencode_version():
         return "unknown"
 
 
+def npm_global_needs_sudo(npm_cmd="npm"):
+    """Report whether `npm install -g` writes somewhere the current user cannot."""
+    if is_windows():
+        return False
+    try:
+        result = subprocess.run(
+            resolve_executable([npm_cmd, "prefix", "-g"]),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+    except Exception:
+        return False
+    prefix = (result.stdout or "").strip()
+    if not prefix:
+        return False
+    target = Path(prefix)
+    while not target.exists() and target != target.parent:
+        target = target.parent
+    return not os.access(target, os.W_OK)
+
+
 def install_opencode(npm_cmd="npm"):
     """Install the OpenCode CLI globally via npm if it is not already present."""
     step("Installing OpenCode")
@@ -192,12 +282,13 @@ def install_opencode(npm_cmd="npm"):
         info(f"OpenCode already installed ({version}); skipping")
         return True
 
+    install_cmd = [npm_cmd, "install", "-g", "opencode-ai@latest"]
     try:
-        run_command(
-            [npm_cmd, "install", "-g", "opencode-ai@latest"],
-            status="Installing OpenCode via npm",
-            timeout=300,
-        )
+        if npm_global_needs_sudo(npm_cmd):
+            info("npm's global prefix is not user-writable; installing with sudo")
+            run_sudo_command(install_cmd, status="Installing OpenCode via npm", timeout=600)
+        else:
+            run_command(install_cmd, status="Installing OpenCode via npm", timeout=600)
     except Exception as exc:
         warning(f"Could not install OpenCode automatically: {exc}")
         info("Install manually: npm i -g opencode-ai@latest (or curl -fsSL https://opencode.ai/install | bash)")

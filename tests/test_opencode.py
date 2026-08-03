@@ -241,3 +241,110 @@ def test_global_config_path_defaults_to_jsonc_when_nothing_exists(monkeypatch, t
     monkeypatch.setattr(opencode.Path, "home", classmethod(lambda cls: tmp_path))
     expected = tmp_path / ".config" / "opencode" / "opencode.jsonc"
     assert opencode.get_global_config_path() == expected
+
+
+def _fake_run(stdout, returncode=0):
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+def test_node_major_version_parses_output(monkeypatch):
+    monkeypatch.setattr(opencode.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(opencode.subprocess, "run", lambda *a, **k: _fake_run("v22.11.0\n"))
+    assert opencode.node_major_version() == 22
+
+
+def test_node_major_version_none_without_node(monkeypatch):
+    monkeypatch.setattr(opencode.shutil, "which", lambda name: None)
+    assert opencode.node_major_version() is None
+
+
+def test_ensure_node_installed_accepts_recent_node(monkeypatch):
+    monkeypatch.setattr(opencode.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(opencode, "node_major_version", lambda: opencode.MIN_NODE_MAJOR)
+
+    def fail_install():
+        raise AssertionError("must not reinstall a recent Node")
+
+    monkeypatch.setattr(opencode, "install_node_linux", fail_install)
+    assert opencode.ensure_node_installed() == ("/usr/bin/node", "/usr/bin/npm", "/usr/bin/npx")
+
+
+def test_ensure_node_installed_upgrades_old_node(monkeypatch):
+    monkeypatch.setattr(opencode.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(opencode.shutil, "which", lambda name: f"/usr/bin/{name}")
+    versions = iter([12, 22])
+    monkeypatch.setattr(opencode, "node_major_version", lambda: next(versions))
+    calls = []
+    monkeypatch.setattr(opencode, "install_node_linux", lambda: calls.append("install"))
+    opencode.ensure_node_installed()
+    assert calls == ["install"]
+
+
+def test_ensure_node_installed_rejects_still_old_node(monkeypatch):
+    monkeypatch.setattr(opencode.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(opencode.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(opencode, "node_major_version", lambda: 12)
+    monkeypatch.setattr(opencode, "install_node_linux", lambda: None)
+    with pytest.raises(RuntimeError):
+        opencode.ensure_node_installed()
+
+
+def test_install_node_linux_uses_nodesource_on_apt(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode.shutil, "which", lambda name: "/usr/bin/apt-get" if name == "apt-get" else None)
+    monkeypatch.setattr(opencode.tempfile, "gettempdir", lambda: str(tmp_path))
+    downloaded = []
+    monkeypatch.setattr(opencode, "download_file", lambda url, dest, description=None: downloaded.append(url))
+    commands = []
+    monkeypatch.setattr(opencode, "run_sudo_command", lambda cmd, **k: commands.append(list(cmd)))
+    opencode.install_node_linux()
+    assert f"setup_{opencode.NODESOURCE_MAJOR}.x" in downloaded[0]
+    assert commands[0][0] == "bash"
+    assert commands[1] == ["apt-get", "install", "-y", "nodejs"]
+
+
+def test_install_node_linux_removes_conflicting_npm(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode.shutil, "which", lambda name: "/usr/bin/apt-get" if name == "apt-get" else None)
+    monkeypatch.setattr(opencode.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(opencode, "download_file", lambda url, dest, description=None: None)
+    commands = []
+
+    def fake_sudo(cmd, **kwargs):
+        cmd = list(cmd)
+        commands.append(cmd)
+        if cmd[:4] == ["apt-get", "install", "-y", "nodejs"] and commands.count(cmd) == 1:
+            raise opencode.CommandError("conflict")
+
+    monkeypatch.setattr(opencode, "run_sudo_command", fake_sudo)
+    opencode.install_node_linux()
+    assert ["apt-get", "remove", "-y", "npm"] in commands
+    assert commands[-1] == ["apt-get", "install", "-y", "nodejs"]
+
+
+def test_npm_global_needs_sudo_when_prefix_not_writable(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode, "is_windows", lambda: False)
+    monkeypatch.setattr(opencode.subprocess, "run", lambda *a, **k: _fake_run(f"{tmp_path}\n"))
+    monkeypatch.setattr(opencode.os, "access", lambda path, mode: False)
+    assert opencode.npm_global_needs_sudo("npm") is True
+
+
+def test_npm_global_needs_sudo_false_when_writable(monkeypatch, tmp_path):
+    monkeypatch.setattr(opencode, "is_windows", lambda: False)
+    monkeypatch.setattr(opencode.subprocess, "run", lambda *a, **k: _fake_run(f"{tmp_path}\n"))
+    monkeypatch.setattr(opencode.os, "access", lambda path, mode: True)
+    assert opencode.npm_global_needs_sudo("npm") is False
+
+
+def test_install_opencode_uses_sudo_when_prefix_not_writable(monkeypatch):
+    monkeypatch.setattr(opencode, "opencode_version", lambda: None)
+    monkeypatch.setattr(opencode, "npm_global_needs_sudo", lambda npm_cmd: True)
+    sudo_calls = []
+    monkeypatch.setattr(opencode, "run_sudo_command", lambda cmd, **k: sudo_calls.append(list(cmd)))
+
+    def fail_plain(*a, **k):
+        raise AssertionError("must not run npm install -g without sudo")
+
+    monkeypatch.setattr(opencode, "run_command", fail_plain)
+    versions = iter([None, "1.0.0"])
+    monkeypatch.setattr(opencode, "opencode_version", lambda: next(versions))
+    assert opencode.install_opencode("npm") is True
+    assert sudo_calls == [["npm", "install", "-g", "opencode-ai@latest"]]
