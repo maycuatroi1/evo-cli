@@ -140,3 +140,4 @@ web/.vite/
 
 # macOS
 .DS_Store
+.claude/skills/.learned/.processed/
