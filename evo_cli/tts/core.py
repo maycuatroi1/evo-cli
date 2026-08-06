@@ -1,13 +1,14 @@
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from evo_cli.tts import gemini as gemini_tts
 from evo_cli.tts import openai as openai_tts
 from evo_cli.tts import vbee
 from evo_cli.tts.chunking import join_audio, split_text
-from evo_cli.tts.creds import has_openai_credentials, has_vbee_credentials
+from evo_cli.tts.creds import has_gemini_credentials, has_openai_credentials, has_vbee_credentials
 from evo_cli.tts.errors import TtsError
 
-PROVIDERS = ("vbee", "openai")
+PROVIDERS = ("gemini", "vbee", "openai")
 JOINABLE_FORMATS = ("mp3", "wav", "pcm")
 MODES = ("realtime", "batch")
 
@@ -21,12 +22,15 @@ def resolve_provider(provider):
             return preferred
         if preferred and preferred != "auto":
             raise TtsError(f"EVO_TTS_PROVIDER is set to '{preferred}', which is not one of: {', '.join(PROVIDERS)}")
+        if has_gemini_credentials():
+            return "gemini"
         if has_vbee_credentials():
             return "vbee"
         if has_openai_credentials():
             return "openai"
         raise TtsError(
-            "no TTS credentials found. Store Vbee with "
+            "no TTS credentials found. Store Gemini with "
+            "`evo cred add gemini_api_key --from-stdin`, Vbee with "
             "`evo cred add vbee.app_id --from-stdin` + `evo cred add vbee.token --from-stdin`, "
             "or OpenAI with `evo cred add openai_api_key --from-stdin`."
         )
@@ -42,14 +46,25 @@ def default_voice_for(provider):
 
 
 def default_voice(provider):
+    if provider == "gemini":
+        return gemini_tts.DEFAULT_VOICE
     return vbee.DEFAULT_VOICE if provider == "vbee" else openai_tts.DEFAULT_VOICE
 
 
 def supported_formats(provider):
+    if provider == "gemini":
+        return gemini_tts.FORMATS
     return vbee.FORMATS if provider == "vbee" else openai_tts.FORMATS
 
 
+def default_format(provider):
+    # Gemini only ever returns raw PCM, so wav is the format that needs no extra tooling.
+    return gemini_tts.DEFAULT_FORMAT if provider == "gemini" else "mp3"
+
+
 def chunk_limit(provider, mode):
+    if provider == "gemini":
+        return gemini_tts.TEXT_LIMIT
     if provider == "vbee":
         return vbee.BATCH_LIMIT if mode == "batch" else vbee.REALTIME_LIMIT
     return openai_tts.TEXT_LIMIT
@@ -136,6 +151,18 @@ def synthesize(
                 sample_rate=sample_rate,
             )
 
+    elif provider == "gemini":
+
+        def call(chunk):
+            return gemini_tts.synthesize(
+                chunk,
+                voice=voice,
+                output_format=output_format,
+                model=model or gemini_tts.DEFAULT_MODEL,
+                instructions=instructions,
+                bitrate=bitrate,
+            )
+
     else:
 
         def call(chunk):
@@ -198,6 +225,8 @@ def synthesize_many(items, concurrency=4, on_item=None, **kwargs):
 
 def list_voices(provider="auto", language_code=None, gender=None, ownership="VBEE", limit=100):
     provider = resolve_provider(provider)
+    if provider == "gemini":
+        return gemini_tts.list_voices()
     if provider == "openai":
         return openai_tts.list_voices()
     voices, pagination = vbee.list_voices(

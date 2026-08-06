@@ -55,5 +55,24 @@ def has_openai_credentials():
     return True
 
 
+def gemini_api_key():
+    key = _resolve("GEMINI_API_KEY", "gemini_api_key") or os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        raise TtsError(
+            "missing Gemini credentials: gemini_api_key\n"
+            "Get one at https://aistudio.google.com/apikey, then store it with:\n"
+            "  evo cred add gemini_api_key --from-stdin"
+        )
+    return key
+
+
+def has_gemini_credentials():
+    try:
+        gemini_api_key()
+    except TtsError:
+        return False
+    return True
+
+
 def vbee_webhook_url():
     return _resolve("VBEE_WEBHOOK_URL", "vbee.webhook_url")

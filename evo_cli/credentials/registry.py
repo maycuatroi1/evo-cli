@@ -72,6 +72,17 @@ SPECS = [
         "keys": ["vbee"],
     },
     {
+        "path": "ai/gemini.json",
+        "id": "gemini",
+        "service": "Google Gemini API",
+        "category": "ai",
+        "type": "api_key",
+        "lifetime": "stable",
+        "description": "Gemini API key (evo tts gemini provider, generateContent)",
+        "rotate": "https://aistudio.google.com/apikey -> create or rotate the key",
+        "keys": ["gemini_api_key"],
+    },
+    {
         "path": "ai/google.json",
         "id": "google_api",
         "service": "Google API key",

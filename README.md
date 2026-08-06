@@ -167,53 +167,66 @@ uses `git pull --ff-only` so the command never creates merge commits.
 
 #### Text to Speech
 
-Synthesise speech through Vbee (Vietnamese) or OpenAI `gpt-4o-mini-tts`, and play it right away:
+Synthesise speech through Gemini `gemini-3.1-flash-tts-preview`, Vbee (Vietnamese), or OpenAI
+`gpt-4o-mini-tts`, and play it right away:
 
 ```bash
 evo tts speak "Xin chào, bản build đã xong"
-evo tts speak -f notes.md -o notes.mp3
+evo tts speak -f notes.md -o notes.wav
+evo tts speak "hôm nay trời đẹp" -V Sulafat --instructions "kể chuyện, ấm áp"
+evo tts speak "[whispers] đừng nói với ai nhé"
 evo tts speak "hello there" -p openai -V nova --instructions "calm and encouraging"
 git log -1 --format=%s | evo tts speak
 ```
 
-`speak` is the realtime path. Text longer than the provider's per-request limit (Vbee 300
-characters, OpenAI 4000) is split on sentence boundaries and the audio is joined back into one file,
-so the first words start playing while the rest is still being synthesised.
+`speak` is the realtime path. Text longer than the provider's per-request limit (Gemini 2000
+characters, Vbee 300, OpenAI 4000) is split on sentence boundaries and the audio is joined back into
+one file, so the first words start playing while the rest is still being synthesised.
+
+Gemini is the most expressive of the three: 30 prebuilt voices, automatic language detection across
+70+ languages, free-form delivery notes through `--instructions`, and inline audio tags such as
+`[whispers]`, `[excited]`, `[sighs]`, or `[very slow]` anywhere in the text. It answers with raw
+24 kHz PCM, so `--format wav` is the default there; `--format mp3` re-encodes through `ffmpeg` and
+needs it on PATH. The format is also inferred from the `--output` suffix, so `-o notes.mp3` still
+produces an mp3.
 
 For bulk work use the batch path, which goes through Vbee's async API and polls
 `/v1/tts/requests/{id}` until each audio link appears:
 
 ```bash
-evo tts batch chapters/ -o audio/          # one mp3 per .txt/.md file
+evo tts batch chapters/ -o audio/          # one file per .txt/.md input
 evo tts batch a.txt b.txt -c 8             # 8 items in flight
 evo tts batch --manifest jobs.jsonl        # {"id":.., "text":.., "voice":..} per line
 ```
 
-OpenAI has no batch speech endpoint, so with `-p openai` the items are parallelised locally instead.
+Gemini and OpenAI have no batch speech endpoint, so there the items are parallelised locally instead.
 
-Voice codes come from `evo tts voices` (`-l en-US`, `--gender male`, `-p openai`, `--json`).
+Voice codes come from `evo tts voices` (`-p gemini`, `-p openai`, `-l en-US`, `--gender male`,
+`--json`).
 
 Credentials live in the omelet store, never in flags or source:
 
 ```bash
+evo cred add gemini_api_key --from-stdin   # key from https://aistudio.google.com/apikey
 evo cred add vbee.app_id --from-stdin      # UUID from https://studio.vbee.vn/apps
 evo cred add vbee.token --from-stdin       # JWT from the same app page
 evo cred add openai_api_key --from-stdin
 ```
 
-`VBEE_APP_ID`, `VBEE_TOKEN`, and `OPENAI_API_KEY` override the store when set.
+`GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `VBEE_APP_ID`, `VBEE_TOKEN`, and `OPENAI_API_KEY` override
+the store when set.
 
 `--provider auto` (the default) resolves to `EVO_TTS_PROVIDER` when that is set, and otherwise to
-whichever provider has credentials. Pick a machine default once:
+the first of Gemini, Vbee, OpenAI that has credentials. Pick a machine default once:
 
 ```bash
-export EVO_TTS_PROVIDER=openai        # what `auto` means here
-export EVO_TTS_VOICE_OPENAI=nova      # default voice for that provider only
+export EVO_TTS_PROVIDER=gemini        # what `auto` means here
+export EVO_TTS_VOICE_GEMINI=Sulafat   # default voice for that provider only
 ```
 
-Prefer the provider-scoped `EVO_TTS_VOICE_OPENAI` / `EVO_TTS_VOICE_VBEE` over a bare
-`EVO_TTS_VOICE`: a shared value breaks as soon as you pass `--provider vbee`, because an OpenAI
-voice name is not a Vbee voice code.
+Prefer the provider-scoped `EVO_TTS_VOICE_GEMINI` / `EVO_TTS_VOICE_OPENAI` / `EVO_TTS_VOICE_VBEE`
+over a bare `EVO_TTS_VOICE`: a shared value breaks as soon as you pass `--provider vbee`, because a
+Gemini voice name is not a Vbee voice code.
 
 Playback uses whichever of `ffplay`, `mpv`, `cvlc`, `afplay`, or `paplay`/`aplay` is on PATH, and
 falls back to PowerShell's `MediaPlayer` on Windows. Without any of them the audio is still written

@@ -34,7 +34,9 @@ def request(url, method="GET", headers=None, payload=None, timeout=180):
             return response.read(), response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         detail = _describe(exc.read().decode("utf-8", "replace"))
-        raise TtsError(f"{method} {url} -> HTTP {exc.code}: {detail}") from exc
+        failure = TtsError(f"{method} {url} -> HTTP {exc.code}: {detail}")
+        failure.status = exc.code
+        raise failure from exc
     except urllib.error.URLError as exc:
         raise TtsError(f"{method} {url} -> {exc.reason}") from exc
 

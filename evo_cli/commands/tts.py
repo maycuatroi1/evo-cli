@@ -16,10 +16,12 @@ TEXT_SUFFIXES = (".txt", ".md")
 SPEAK_EPILOG = Text.from_markup(
     "[bold]Examples[/bold]\n\n"
     "  [cyan]evo tts speak 'Xin chào, bản build đã xong'[/cyan]   speak it out loud now\n"
-    "  [cyan]evo tts speak -f notes.md -o notes.mp3[/cyan]        read a file, keep the audio\n"
+    "  [cyan]evo tts speak -f notes.md -o notes.wav[/cyan]        read a file, keep the audio\n"
+    "  [cyan]evo tts speak 'hi' -V Sulafat --instructions 'kể chuyện, ấm áp'[/cyan]  steer the delivery\n"
+    "  [cyan]evo tts speak '[whispers] bí mật nhé'[/cyan]         Gemini audio tags work inline\n"
     "  [cyan]evo tts speak 'hello' -p openai -V nova[/cyan]       use gpt-4o-mini-tts instead\n"
     "  [cyan]git log -1 --format=%s | evo tts speak[/cyan]        read stdin\n"
-    "  [cyan]evo tts speak 'hi' --stdout > out.mp3[/cyan]         pipe raw audio"
+    "  [cyan]evo tts speak 'hi' --stdout > out.wav[/cyan]         pipe raw audio"
 )
 
 BATCH_EPILOG = Text.from_markup(
@@ -33,8 +35,9 @@ BATCH_EPILOG = Text.from_markup(
 
 VOICES_EPILOG = Text.from_markup(
     "[bold]Examples[/bold]\n\n"
-    "  [cyan]evo tts voices[/cyan]                                Vbee Vietnamese voices\n"
-    "  [cyan]evo tts voices -l en-US --gender male[/cyan]         filter by language and gender\n"
+    "  [cyan]evo tts voices[/cyan]                                voices of the auto-picked provider\n"
+    "  [cyan]evo tts voices -p gemini[/cyan]                      the 30 Gemini prebuilt voices\n"
+    "  [cyan]evo tts voices -p vbee -l en-US --gender male[/cyan] filter by language and gender\n"
     "  [cyan]evo tts voices -p openai[/cyan]                      gpt-4o-mini-tts voices\n"
     "  [cyan]evo tts voices --json[/cyan]                         machine-readable"
 )
@@ -90,6 +93,16 @@ def collect_items(inputs, texts, manifest):
     return [item for item in items if item["text"].strip()]
 
 
+def resolve_output_format(provider, output_format, output=None):
+    if output_format:
+        return output_format
+    if output:
+        suffix = Path(output).suffix.lstrip(".").lower()
+        if suffix in core.supported_formats(provider):
+            return suffix
+    return core.default_format(provider)
+
+
 def unique_path(out_dir, name, output_format):
     candidate = out_dir / f"{name}.{output_format}"
     counter = 2
@@ -101,12 +114,16 @@ def unique_path(out_dir, name, output_format):
 
 @click.group("tts")
 def tts_group():
-    """**Text to speech** via Vbee (Vietnamese) or OpenAI `gpt-4o-mini-tts`.
+    """**Text to speech** via Gemini `gemini-3.1-flash-tts-preview`, Vbee, or OpenAI `gpt-4o-mini-tts`.
 
     `speak` is the realtime path: it synthesises and plays immediately.
     `batch` is the bulk path: it uses Vbee's async API and writes one file per input.
-    Credentials come from the omelet store (`evo cred add vbee.app_id`, `vbee.token`,
-    `openai_api_key`); nothing is read from hardcoded values.
+    Credentials come from the omelet store (`evo cred add gemini_api_key`, `vbee.app_id`,
+    `vbee.token`, `openai_api_key`); nothing is read from hardcoded values.
+
+    Gemini is the default when its key is stored: 30 expressive voices, any of the
+    70+ supported languages, plus inline audio tags like `[whispers]` or `[excited]`
+    and free-form delivery notes through `--instructions`.
     """
 
 
@@ -116,25 +133,24 @@ def tts_group():
 @click.option(
     "-p",
     "--provider",
-    type=click.Choice(["auto", "vbee", "openai"]),
+    type=click.Choice(["auto", "gemini", "vbee", "openai"]),
     default="auto",
     show_default=True,
-    help="auto picks Vbee when its credentials exist, else OpenAI.",
+    help="auto picks Gemini when its key exists, else Vbee, else OpenAI.",
 )
 @click.option("-V", "--voice", help="Voice code (see `evo tts voices`).")
 @click.option("-o", "--output", help="Keep the audio at this path instead of a temp file.")
 @click.option(
     "--format",
     "output_format",
-    type=click.Choice(["mp3", "wav"]),
-    default="mp3",
-    show_default=True,
-    help="Audio container.",
+    type=click.Choice(["mp3", "wav", "pcm"]),
+    default=None,
+    help="Audio container. Default: wav on Gemini, mp3 elsewhere, or the suffix of --output.",
 )
 @click.option("--speed", type=float, default=1.0, show_default=True, help="Speaking rate (Vbee: 0.25-1.9).")
-@click.option("--bitrate", type=int, default=128, show_default=True, help="Vbee bitrate in kbps.")
-@click.option("--instructions", help="OpenAI only: how the voice should deliver the text.")
-@click.option("--model", help="OpenAI model override (default gpt-4o-mini-tts).")
+@click.option("--bitrate", type=int, default=128, show_default=True, help="Bitrate in kbps (Vbee, Gemini mp3).")
+@click.option("--instructions", help="Gemini/OpenAI: how the voice should deliver the text.")
+@click.option("--model", help="Model override (default gemini-3.1-flash-tts-preview / gpt-4o-mini-tts).")
 @click.option("--no-play", is_flag=True, help="Synthesise only; do not play through the speakers.")
 @click.option("--stdout", "to_stdout", is_flag=True, help="Write raw audio bytes to stdout (implies --no-play).")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress progress output.")
@@ -156,14 +172,15 @@ def speak(
     """Synthesise **TEXT** and play it right away.
 
     Long text is split on sentence boundaries so each request stays inside the
-    provider's realtime limit (Vbee 300 characters, OpenAI 4000), then the
-    resulting audio is joined back into one file.
+    provider's realtime limit (Gemini 2000 characters, Vbee 300, OpenAI 4000),
+    then the resulting audio is joined back into one file.
     """
     body = read_input_text(text, text_file)
     if not quiet and not to_stdout:
         step("evo tts speak")
     try:
         resolved = core.resolve_provider(provider)
+        output_format = resolve_output_format(resolved, output_format, output)
         chunks = core.chunk_limit(resolved, "realtime")
         if not quiet and not to_stdout:
             info(
@@ -221,10 +238,10 @@ def speak(
 @click.option(
     "-p",
     "--provider",
-    type=click.Choice(["auto", "vbee", "openai"]),
+    type=click.Choice(["auto", "gemini", "vbee", "openai"]),
     default="auto",
     show_default=True,
-    help="auto picks Vbee when its credentials exist, else OpenAI.",
+    help="auto picks Gemini when its key exists, else Vbee, else OpenAI.",
 )
 @click.option(
     "--mode",
@@ -237,15 +254,14 @@ def speak(
 @click.option(
     "--format",
     "output_format",
-    type=click.Choice(["mp3", "wav"]),
-    default="mp3",
-    show_default=True,
-    help="Audio container.",
+    type=click.Choice(["mp3", "wav", "pcm"]),
+    default=None,
+    help="Audio container. Default: wav on Gemini, mp3 elsewhere.",
 )
 @click.option("--speed", type=float, default=1.0, show_default=True, help="Speaking rate.")
-@click.option("--bitrate", type=int, default=128, show_default=True, help="Vbee bitrate in kbps.")
-@click.option("--instructions", help="OpenAI only: how the voice should deliver the text.")
-@click.option("--model", help="OpenAI model override (default gpt-4o-mini-tts).")
+@click.option("--bitrate", type=int, default=128, show_default=True, help="Bitrate in kbps (Vbee, Gemini mp3).")
+@click.option("--instructions", help="Gemini/OpenAI: how the voice should deliver the text.")
+@click.option("--model", help="Model override (default gemini-3.1-flash-tts-preview / gpt-4o-mini-tts).")
 @click.option("-c", "--concurrency", type=int, default=4, show_default=True, help="Items in flight at once.")
 @click.option("--webhook", help="Vbee webhookUrl; the API requires one even though evo polls for the result.")
 @click.option("--timeout", type=int, default=900, show_default=True, help="Seconds to wait per async request.")
@@ -287,9 +303,10 @@ def batch(
         error(str(exc))
         sys.exit(1)
 
+    output_format = resolve_output_format(resolved, output_format)
     effective_mode = mode
-    if resolved == "openai" and mode == "batch":
-        info("OpenAI has no batch speech endpoint - running the items concurrently instead.")
+    if resolved in ("openai", "gemini") and mode == "batch":
+        info(f"{resolved} has no batch speech endpoint - running the items concurrently instead.")
         effective_mode = "realtime"
 
     target_dir = Path(out_dir)
@@ -340,7 +357,7 @@ def batch(
 @click.option(
     "-p",
     "--provider",
-    type=click.Choice(["auto", "vbee", "openai"]),
+    type=click.Choice(["auto", "gemini", "vbee", "openai"]),
     default="auto",
     show_default=True,
     help="Which catalog to list.",

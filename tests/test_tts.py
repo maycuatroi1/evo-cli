@@ -1,3 +1,4 @@
+import base64
 import io
 import wave
 
@@ -5,17 +6,21 @@ import pytest
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
-from evo_cli.tts import core, vbee
+from evo_cli.commands import tts as tts_command
+from evo_cli.tts import core, gemini, vbee
 from evo_cli.tts.chunking import join_audio, split_text
 from evo_cli.tts.errors import TtsError
 
 EVO_TTS_ENV_VARS = (
     "EVO_TTS_PROVIDER",
     "EVO_TTS_VOICE",
+    "EVO_TTS_VOICE_GEMINI",
     "EVO_TTS_VOICE_OPENAI",
     "EVO_TTS_VOICE_VBEE",
     "EVO_TTS_SPEED",
     "EVO_TTS_DIR",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
 )
 
 
@@ -31,6 +36,17 @@ def clean_tts_env(monkeypatch):
 @pytest.fixture
 def runner():
     return CliRunner()
+
+
+def gemini_response(pcm, mime_type="audio/l16; rate=24000; channels=1"):
+    return {
+        "candidates": [
+            {
+                "content": {"parts": [{"inlineData": {"mimeType": mime_type, "data": base64.b64encode(pcm).decode()}}]},
+                "finishReason": "STOP",
+            }
+        ]
+    }
 
 
 def wav_bytes(frames, framerate=8000):
@@ -94,7 +110,15 @@ def test_join_audio_stitches_wav_frames():
         assert reader.getframerate() == 8000
 
 
+@pytest.fixture
+def no_credentials(monkeypatch):
+    for name in ("has_gemini_credentials", "has_vbee_credentials", "has_openai_credentials"):
+        monkeypatch.setattr(core, name, lambda: False)
+    return monkeypatch
+
+
 def test_resolve_provider_accepts_explicit_names():
+    assert core.resolve_provider("gemini") == "gemini"
     assert core.resolve_provider("vbee") == "vbee"
     assert core.resolve_provider("openai") == "openai"
 
@@ -104,21 +128,25 @@ def test_resolve_provider_rejects_unknown():
         core.resolve_provider("elevenlabs")
 
 
-def test_resolve_provider_auto_prefers_vbee(monkeypatch):
-    monkeypatch.setattr(core, "has_vbee_credentials", lambda: True)
-    monkeypatch.setattr(core, "has_openai_credentials", lambda: True)
+def test_resolve_provider_auto_prefers_gemini(no_credentials):
+    no_credentials.setattr(core, "has_gemini_credentials", lambda: True)
+    no_credentials.setattr(core, "has_vbee_credentials", lambda: True)
+    no_credentials.setattr(core, "has_openai_credentials", lambda: True)
+    assert core.resolve_provider("auto") == "gemini"
+
+
+def test_resolve_provider_auto_falls_back_to_vbee(no_credentials):
+    no_credentials.setattr(core, "has_vbee_credentials", lambda: True)
+    no_credentials.setattr(core, "has_openai_credentials", lambda: True)
     assert core.resolve_provider("auto") == "vbee"
 
 
-def test_resolve_provider_auto_falls_back_to_openai(monkeypatch):
-    monkeypatch.setattr(core, "has_vbee_credentials", lambda: False)
-    monkeypatch.setattr(core, "has_openai_credentials", lambda: True)
+def test_resolve_provider_auto_falls_back_to_openai(no_credentials):
+    no_credentials.setattr(core, "has_openai_credentials", lambda: True)
     assert core.resolve_provider("auto") == "openai"
 
 
-def test_resolve_provider_auto_without_credentials(monkeypatch):
-    monkeypatch.setattr(core, "has_vbee_credentials", lambda: False)
-    monkeypatch.setattr(core, "has_openai_credentials", lambda: False)
+def test_resolve_provider_auto_without_credentials(no_credentials):
     with pytest.raises(TtsError, match="no TTS credentials"):
         core.resolve_provider("auto")
 
@@ -127,6 +155,11 @@ def test_chunk_limit_differs_between_modes():
     assert core.chunk_limit("vbee", "realtime") == vbee.REALTIME_LIMIT
     assert core.chunk_limit("vbee", "batch") == vbee.BATCH_LIMIT
     assert core.chunk_limit("openai", "realtime") == core.openai_tts.TEXT_LIMIT
+
+
+def test_chunk_limit_is_mode_independent_for_gemini():
+    assert core.chunk_limit("gemini", "realtime") == gemini.TEXT_LIMIT
+    assert core.chunk_limit("gemini", "batch") == gemini.TEXT_LIMIT
 
 
 def test_synthesize_rejects_empty_text():
@@ -314,6 +347,110 @@ def test_scoped_voice_does_not_leak_across_providers(monkeypatch):
     monkeypatch.delenv("EVO_TTS_VOICE", raising=False)
     monkeypatch.setenv("EVO_TTS_VOICE_OPENAI", "nova")
     assert core.default_voice_for("vbee") == vbee.DEFAULT_VOICE
+
+
+def test_default_voice_for_gemini_is_the_friendly_one(monkeypatch):
+    monkeypatch.delenv("EVO_TTS_VOICE", raising=False)
+    assert core.default_voice_for("gemini") == gemini.DEFAULT_VOICE == "Achird"
+
+
+def test_gemini_voice_catalog_is_the_documented_thirty():
+    codes = [entry["code"] for entry in gemini.list_voices()]
+    assert len(codes) == 30
+    assert len(set(codes)) == 30
+    assert {"Achird", "Kore", "Puck", "Sulafat"} <= set(codes)
+
+
+def test_gemini_normalises_the_voice_case_but_passes_unknown_through():
+    assert gemini.normalise_voice("achird") == "Achird"
+    assert gemini.normalise_voice("  KORE ") == "Kore"
+    assert gemini.normalise_voice("BrandNewVoice") == "BrandNewVoice"
+    assert gemini.normalise_voice(None) == gemini.DEFAULT_VOICE
+
+
+def test_gemini_payload_carries_the_voice_and_the_instructions():
+    payload = gemini.build_payload("xin chào", voice="sulafat", instructions="kể chuyện, ấm áp:")
+    config = payload["generationConfig"]
+    assert config["responseModalities"] == ["AUDIO"]
+    assert config["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Sulafat"
+    assert payload["contents"][0]["parts"][0]["text"] == "kể chuyện, ấm áp:\nxin chào"
+
+
+def test_gemini_guards_the_character_limit():
+    with pytest.raises(TtsError, match="at most 2000 characters"):
+        gemini.synthesize("x" * 2001)
+
+
+def test_gemini_wraps_the_raw_pcm_in_a_wav_container(monkeypatch):
+    pcm = b"\x00\x01" * 100
+    monkeypatch.setattr(gemini, "_post", lambda *args: gemini_response(pcm))
+    audio = gemini.synthesize("xin chào", output_format="wav")
+    with wave.open(io.BytesIO(audio), "rb") as reader:
+        assert reader.getframerate() == 24000
+        assert reader.getnchannels() == 1
+        assert reader.getsampwidth() == 2
+        assert reader.readframes(reader.getnframes()) == pcm
+
+
+def test_gemini_returns_the_pcm_untouched_when_asked(monkeypatch):
+    pcm = b"\x02\x03" * 40
+    monkeypatch.setattr(gemini, "_post", lambda *args: gemini_response(pcm))
+    assert gemini.synthesize("xin chào", output_format="pcm") == pcm
+
+
+def test_gemini_reports_a_response_without_audio(monkeypatch):
+    monkeypatch.setattr(gemini, "_post", lambda *args: {"candidates": [{"finishReason": "SAFETY"}]})
+    with pytest.raises(TtsError, match="finishReason=SAFETY"):
+        gemini.synthesize("xin chào")
+
+
+def test_gemini_retries_a_server_error_then_succeeds(monkeypatch):
+    attempts = []
+
+    def flaky(url, **kwargs):
+        attempts.append(url)
+        if len(attempts) < 3:
+            failure = TtsError("boom")
+            failure.status = 500
+            raise failure
+        return gemini_response(b"\x00\x00")
+
+    monkeypatch.setattr(gemini, "request_json", flaky)
+    monkeypatch.setattr(gemini.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(gemini, "gemini_api_key", lambda: "test-key")
+    assert gemini.synthesize("xin chào", output_format="pcm") == b"\x00\x00"
+    assert len(attempts) == 3
+
+
+def test_gemini_does_not_retry_a_bad_request(monkeypatch):
+    attempts = []
+
+    def rejected(url, **kwargs):
+        attempts.append(url)
+        failure = TtsError("bad key")
+        failure.status = 400
+        raise failure
+
+    monkeypatch.setattr(gemini, "request_json", rejected)
+    monkeypatch.setattr(gemini, "gemini_api_key", lambda: "test-key")
+    with pytest.raises(TtsError, match="bad key"):
+        gemini.synthesize("xin chào")
+    assert len(attempts) == 1
+
+
+def test_output_format_defaults_to_wav_on_gemini_and_mp3_elsewhere():
+    assert tts_command.resolve_output_format("gemini", None) == "wav"
+    assert tts_command.resolve_output_format("vbee", None) == "mp3"
+    assert tts_command.resolve_output_format("openai", None) == "mp3"
+
+
+def test_output_format_follows_the_output_suffix():
+    assert tts_command.resolve_output_format("gemini", None, "notes.mp3") == "mp3"
+    assert tts_command.resolve_output_format("gemini", None, "notes.ogg") == "wav"
+
+
+def test_an_explicit_output_format_wins():
+    assert tts_command.resolve_output_format("gemini", "pcm", "notes.mp3") == "pcm"
 
 
 def test_synthesize_applies_the_env_voice(monkeypatch):

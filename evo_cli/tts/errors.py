@@ -1,2 +1,2 @@
 class TtsError(RuntimeError):
-    pass
+    status = None
