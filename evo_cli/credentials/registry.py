@@ -78,7 +78,7 @@ SPECS = [
         "category": "ai",
         "type": "api_key",
         "lifetime": "stable",
-        "description": "Gemini API key (evo tts gemini provider, generateContent)",
+        "description": "Gemini API key (evo tts gemini provider, evo image upscale, generateContent)",
         "rotate": "https://aistudio.google.com/apikey -> create or rotate the key",
         "keys": ["gemini_api_key"],
     },
