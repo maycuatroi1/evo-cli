@@ -39,6 +39,8 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(ncnn.shutil, "which", lambda name: None)
     monkeypatch.setattr(console, "download_file", no_network)
     monkeypatch.setattr(ncnn, "_run", no_binary)
+    monkeypatch.setattr(subprocess, "run", no_binary)
+    monkeypatch.setattr(subprocess, "Popen", no_binary)
     monkeypatch.setattr(gemini.urllib.request, "urlopen", no_network)
     monkeypatch.setattr(gemini.time, "sleep", lambda seconds: None)
     return tmp_path / "upscayl"
@@ -86,6 +88,24 @@ def _runner(calls, returncode=0, produce=True):
         return subprocess.CompletedProcess(cmd, returncode, "", "upscayl-bin: something went wrong")
 
     return run
+
+
+def test_sandbox_fails_a_test_that_reaches_the_network(tmp_path):
+    with pytest.raises(pytest.fail.Exception):
+        console.download_file(PINNED_WINDOWS_ASSET, str(tmp_path / "asset.zip"))
+    with pytest.raises(pytest.fail.Exception):
+        gemini.urllib.request.urlopen(gemini.API_URL.format(model=gemini.DEFAULT_MODEL))
+
+
+def test_sandbox_fails_a_test_that_spawns_the_binary(installed, tmp_path):
+    src = tmp_path / "in.png"
+    src.write_text("png", encoding="utf-8")
+    with pytest.raises(pytest.fail.Exception):
+        ncnn.upscale(src, tmp_path / "out.png")
+    with pytest.raises(pytest.fail.Exception):
+        ncnn._run([str(installed)])
+    with pytest.raises(pytest.fail.Exception):
+        subprocess.run([sys.executable, "-c", "pass"])
 
 
 def test_ncnn_asset_url_pins_the_release():
@@ -717,6 +737,42 @@ def test_core_threshold_decides_which_engine_ships(tmp_path, delivery, installed
     loose = _process(delivery, tmp_path / "loose", settings=core.preset(provider="gemini", rim_lift_max=999.0))[0]
     assert strict["engine"] == "ncnn"
     assert loose["engine"] == "gemini"
+
+
+@pytest.mark.parametrize(
+    "measured,limit,engine,fell_back",
+    [
+        (0.0, 20.0, "gemini", False),
+        (19.9, 20.0, "gemini", False),
+        (20.0, 20.0, "gemini", False),
+        (20.1, 20.0, "ncnn", True),
+        (-8.0, -1.0, "gemini", False),
+        (0.0, -1.0, "ncnn", True),
+        (120.0, 999.0, "gemini", False),
+    ],
+    ids=["clean", "just-under", "on-the-line", "just-over", "below-a-strict-limit", "strict", "loose"],
+)
+def test_fallback_table_follows_the_rim_lift_against_the_limit(
+    monkeypatch, tmp_path, delivery, installed, measured, limit, engine, fell_back
+):
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 42.0)
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: measured)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini", rim_lift_max=limit))[0]
+    assert record["engine"] == engine
+    assert record["rim_lift"] == measured
+    assert record["fidelity_db"] == 42.0
+    assert ("fallback" in record) is fell_back
+    if fell_back:
+        assert record["fallback"] == f"rim lift {measured} > {limit}"
+
+
+def test_fallback_table_never_reads_the_fidelity_number(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: 0.0)
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 3.0)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
+    assert record["engine"] == "gemini"
+    assert record["fidelity_db"] == 3.0
+    assert "fallback" not in record
 
 
 def test_core_falls_back_when_the_upstream_call_fails(tmp_path, delivery, installed):
