@@ -12,6 +12,7 @@ from evo_cli.commands.gh import setup_gh
 from evo_cli.commands.harness import harness_group
 from evo_cli.commands.hwid import hwid
 from evo_cli.commands.hwid_reset import hwid_reset
+from evo_cli.commands.image import image_group
 from evo_cli.commands.localproxy import localproxy
 from evo_cli.commands.mcp import mcp_group
 from evo_cli.commands.miniconda import miniconda
@@ -70,6 +71,7 @@ cli.add_command(gdrive)
 cli.add_command(harness_group)
 cli.add_command(hwid)
 cli.add_command(hwid_reset)
+cli.add_command(image_group)
 cli.add_command(site2s)
 cli.add_command(localproxy)
 cli.add_command(mcp_group)

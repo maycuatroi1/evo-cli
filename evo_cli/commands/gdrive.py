@@ -1,18 +1,30 @@
 import base64
+import html
+import http.cookiejar
 import json
 import mimetypes
 import re
+import shutil
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import rich_click as click
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from rich.text import Text
 
-from evo_cli.console import error, info, step, success, warning
+from evo_cli.console import console, error, info, step, success, warning
 from evo_cli.credentials import google_oauth
 from evo_cli.credentials.registry import dig, load_entries
 from evo_cli.credentials.store import compile_flat
@@ -22,8 +34,15 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 DOCS_API = "https://docs.googleapis.com/v1/documents/{doc_id}"
 DRIVE_FILE_API = "https://www.googleapis.com/drive/v3/files/{file_id}"
 DRIVE_EXPORT_API = "https://www.googleapis.com/drive/v3/files/{file_id}/export"
+DRIVE_UC_DOWNLOAD = "https://drive.google.com/uc?export=download&id={file_id}"
+DOWNLOAD_CHUNK = 1 << 20
 
 DOC_ID_RE = re.compile(r"/document/d/([a-zA-Z0-9_-]+)")
+FILE_ID_RE = re.compile(r"/file/d/([a-zA-Z0-9_-]+)")
+QUERY_ID_RE = re.compile(r"[?&]id=([a-zA-Z0-9_-]+)")
+CONFIRM_ACTION_RE = re.compile(r"<form[^>]*id=\"download-form\"[^>]*action=\"([^\"]+)\"", re.IGNORECASE)
+CONFIRM_FIELD_RE = re.compile(r"<input[^>]*type=\"hidden\"[^>]*name=\"([^\"]+)\"[^>]*value=\"([^\"]*)\"", re.IGNORECASE)
+UNSAFE_NAME_RE = re.compile(r"[\\/:*?\"<>|]+")
 RAW_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{20,}$")
 MD_INLINE_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((https?://[^)\s]+)\)")
 MD_REF_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\[([^\]]+)\]")
@@ -39,11 +58,31 @@ EPILOG = Text.from_markup(
     "  [cyan]evo gdrive doc-read <url> --raw[/cyan]         also dump the raw API response"
 )
 
+GET_EPILOG = Text.from_markup(
+    "[bold]Examples[/bold]\n\n"
+    "  [cyan]evo gdrive get <url>[/cyan]                     save into the current directory\n"
+    "  [cyan]evo gdrive get <url> -o ./out[/cyan]            save into ./out\n"
+    "  [cyan]evo gdrive get <id> --unzip[/cyan]              extract the archive next to it\n"
+    "  [cyan]evo gdrive get <url> --name data.zip[/cyan]     override the name Drive sends\n\n"
+    "[dim]Large files get a virus-scan interstitial instead of bytes; this command\n"
+    "follows it with the confirm token, which is why `evo download` cannot fetch them.[/dim]"
+)
+
 
 def extract_doc_id(value):
     match = DOC_ID_RE.search(value)
     if match:
         return match.group(1)
+    if RAW_ID_RE.match(value):
+        return value
+    return None
+
+
+def extract_file_id(value):
+    for pattern in (FILE_ID_RE, DOC_ID_RE, QUERY_ID_RE):
+        match = pattern.search(value)
+        if match:
+            return match.group(1)
     if RAW_ID_RE.match(value):
         return value
     return None
@@ -447,9 +486,168 @@ def run_doc_read(target, out_dir, no_images, raw, via_docs_api):
     success(f"Wrote [accent]{md_path}[/accent] ({len(markdown)} bytes)")
 
 
+def optional_access_token():
+    try:
+        return access_token()
+    except click.ClickException:
+        return None
+
+
+def drive_opener():
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+
+def open_drive_url(opener, url, token=None, timeout=120):
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("User-Agent", "evo-cli")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    return opener.open(req, timeout=timeout)
+
+
+def is_html_response(response):
+    return "text/html" in (response.headers.get("Content-Type") or "").lower()
+
+
+def parse_confirm_form(body):
+    match = CONFIRM_ACTION_RE.search(body)
+    if not match:
+        return None, {}
+    fields = {name: html.unescape(value) for name, value in CONFIRM_FIELD_RE.findall(body)}
+    return html.unescape(match.group(1)), fields
+
+
+def open_drive_download(file_id, token):
+    opener = drive_opener()
+    response = open_drive_url(opener, DRIVE_UC_DOWNLOAD.format(file_id=file_id), token=token)
+    if not is_html_response(response):
+        return response
+    body = response.read().decode("utf-8", "replace")
+    response.close()
+    action, fields = parse_confirm_form(body)
+    if not action:
+        return None
+    info("Virus-scan interstitial - re-issuing with the confirm token.")
+    response = open_drive_url(opener, action + "?" + urllib.parse.urlencode(fields), token=token)
+    if is_html_response(response):
+        response.close()
+        return None
+    return response
+
+
+def open_drive_file(file_id):
+    token = optional_access_token()
+    if token:
+        try:
+            response = open_drive_download(file_id, token)
+        except urllib.error.HTTPError as exc:
+            warning(f"Drive OAuth path failed: HTTP {exc.code}.")
+            response = None
+        if response is not None:
+            return response
+        info("Falling back to the anonymous public download path.")
+    try:
+        response = open_drive_download(file_id, None)
+    except urllib.error.HTTPError as exc:
+        raise click.ClickException(f"download failed: HTTP {exc.code} {exc.reason}") from exc
+    if response is None:
+        raise click.ClickException(
+            "Drive answered with HTML instead of file bytes. The file may be private, "
+            "over its download quota, or removed."
+        )
+    return response
+
+
+def safe_download_name(name):
+    cleaned = UNSAFE_NAME_RE.sub("_", name).strip().strip(".")
+    return cleaned or "download.bin"
+
+
+def stream_to_file(response, dest):
+    total = int(response.headers.get("Content-Length") or 0)
+    columns = [
+        TextColumn("[info]{task.description}[/info]"),
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+    ]
+    with Progress(*columns, console=console) as progress:
+        task = progress.add_task(dest.name, total=total or None)
+        with open(dest, "wb") as handle:
+            while True:
+                chunk = response.read(DOWNLOAD_CHUNK)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                progress.update(task, advance=len(chunk))
+    return dest
+
+
+def skip_archive_member(name):
+    parts = [part for part in name.replace("\\", "/").split("/") if part]
+    if not parts:
+        return True
+    return "__MACOSX" in parts or parts[-1] == ".DS_Store"
+
+
+def safe_member_path(dest_dir, name):
+    root = dest_dir.resolve()
+    target = (dest_dir / name).resolve()
+    if target != root and root not in target.parents:
+        return None
+    return target
+
+
+def extract_archive(archive, dest_dir):
+    if not zipfile.is_zipfile(archive):
+        warning(f"{archive.name} is not a zip archive - skipping --unzip.")
+        return 0
+    written = 0
+    with zipfile.ZipFile(archive) as bundle:
+        for member in bundle.infolist():
+            if member.is_dir() or skip_archive_member(member.filename):
+                continue
+            target = safe_member_path(dest_dir, member.filename)
+            if target is None:
+                warning(f"Skipping archive entry outside the output folder: {member.filename}")
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with bundle.open(member) as source, open(target, "wb") as handle:
+                shutil.copyfileobj(source, handle, DOWNLOAD_CHUNK)
+            written += 1
+    return written
+
+
+def run_get(target, out_dir, unzip, name):
+    file_id = extract_file_id(target)
+    if not file_id:
+        raise click.ClickException("could not extract a Google Drive file ID from input.")
+    info(f"File ID: [accent]{file_id}[/accent]")
+
+    dest_dir = Path(out_dir) if out_dir else Path.cwd()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    response = open_drive_file(file_id)
+    try:
+        filename = name or parse_filename_from_disposition(dict(response.headers)) or f"{file_id}.bin"
+        dest = dest_dir / safe_download_name(filename)
+        info(f"Saving to [accent]{dest}[/accent]")
+        stream_to_file(response, dest)
+    finally:
+        response.close()
+    success(f"Downloaded [accent]{dest.name}[/accent] ({dest.stat().st_size} bytes)")
+
+    if unzip:
+        step("Extract archive")
+        written = extract_archive(dest, dest_dir)
+        if written:
+            success(f"Extracted [accent]{written}[/accent] files into [accent]{dest_dir}[/accent]")
+
+
 @click.group("gdrive")
 def gdrive():
-    """**Google Drive** helpers. Read Google Docs (text + images) from URL or ID."""
+    """**Google Drive** helpers. Read Google Docs and download files from URL or ID."""
 
 
 @gdrive.command("doc-read", epilog=EPILOG)
@@ -477,6 +675,44 @@ def doc_read(target, out_dir, no_images, raw, via_docs_api):
     step("evo gdrive doc-read")
     try:
         run_doc_read(target, out_dir, no_images, raw, via_docs_api)
+    except click.ClickException:
+        raise
+    except Exception as exc:
+        error(str(exc))
+        sys.exit(1)
+
+
+@gdrive.command(
+    "get",
+    epilog=GET_EPILOG,
+    context_settings={"help_option_names": ["-h", "--help"]},
+    help=(
+        "Download a Drive file from `TARGET` (share URL or raw file ID).\n\n"
+        "Google answers the download endpoint for a large file with an HTML "
+        "virus-scan interstitial instead of bytes; this command re-issues the "
+        "request with the confirm token and uuid that form carries, which is why "
+        "`evo download` cannot fetch these URLs. The stored `google_drive` OAuth "
+        "token is tried first, then the anonymous public path, so a private file "
+        "you do own still works.\n\n"
+        "With `--unzip` the archive is extracted next to it, skipping `__MACOSX/` "
+        "and `.DS_Store`."
+    ),
+)
+@click.argument("target")
+@click.option(
+    "-o",
+    "--output",
+    "out_dir",
+    type=click.Path(file_okay=False),
+    default=None,
+    help="Output folder. Default: the current directory.",
+)
+@click.option("--unzip", is_flag=True, help="Extract the downloaded archive into the output folder.")
+@click.option("--name", default=None, metavar="FILENAME", help="Save under this name instead of the one Drive sends.")
+def get_cmd(target, out_dir, unzip, name):
+    step("evo gdrive get")
+    try:
+        run_get(target, out_dir, unzip, name)
     except click.ClickException:
         raise
     except Exception as exc:
