@@ -9,8 +9,11 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
 from evo_cli import console, imaging
+from evo_cli.cli import cli
+from evo_cli.commands import image as image_cmd
 from evo_cli.imaging import align, core, gemini, ncnn
 from evo_cli.imaging.errors import ImagingError
 
@@ -838,3 +841,102 @@ def test_cache_dry_run_counts_what_is_already_there(tmp_path, delivery):
         {"file": "theme/node_primary_64x64.png", "engine": "gemini", "cached": True}
     ]
     assert len(calls) == 1
+
+
+def test_registered_image_group_sits_on_the_cli():
+    assert "image" in cli.commands
+    for name in ("upscale", "check", "install"):
+        assert name in cli.commands["image"].commands
+
+
+def test_registered_image_help_runs_for_every_subcommand():
+    for args in (["image", "-h"], ["image", "upscale", "-h"], ["image", "check", "-h"], ["image", "install", "-h"]):
+        result = CliRunner().invoke(cli, args)
+        assert result.exit_code == 0
+    listing = CliRunner().invoke(cli, ["image", "-h"]).output
+    assert "Examples" in listing
+    assert "evo image upscale" in listing
+
+
+def test_registered_image_upscale_dry_run_counts_what_is_ready(tmp_path, delivery):
+    out = tmp_path / "out"
+    args = ["image", "upscale", str(delivery), "-o", str(out), "--provider", "gemini", "--dry-run"]
+    first = CliRunner().invoke(cli, args)
+    assert first.exit_code == 0
+    assert "cached: 0" in first.output
+    assert not out.exists()
+
+    _process(delivery, out)
+    second = CliRunner().invoke(cli, args)
+    assert second.exit_code == 0
+    assert "cached: 1" in second.output
+
+
+def test_registered_image_upscale_hands_the_options_to_the_engine(monkeypatch, tmp_path, delivery):
+    seen = {}
+
+    def fake(sources, out_dir, **kwargs):
+        seen["sources"] = [Path(item).name for item in sources]
+        seen["out_dir"] = out_dir
+        seen.update(kwargs)
+        return [{"file": "theme/node_primary_64x64.png", "engine": "ncnn", "cached": False}]
+
+    monkeypatch.setattr(core, "process_many", fake)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "image",
+            "upscale",
+            str(delivery),
+            "-o",
+            str(tmp_path / "out"),
+            "--provider",
+            "ncnn",
+            "--model",
+            "remacri-4x",
+            "--scale",
+            "0.5",
+            "--only",
+            "ui",
+            "-j",
+            "2",
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0
+    assert seen["sources"] == ["node_primary_64x64.png"]
+    assert seen["jobs"] == 2
+    assert seen["force"] is True
+    assert seen["settings"]["provider"] == "ncnn"
+    assert seen["settings"]["model"] == "remacri-4x"
+    assert seen["settings"]["master_scale"] == 0.5
+    assert seen["settings"]["outputs"] == ["ui"]
+
+
+def test_registered_image_upscale_reports_a_failed_item(monkeypatch, tmp_path, delivery):
+    monkeypatch.setattr(core, "process_many", lambda *args, **kwargs: [{"file": "a.png", "error": "boom"}])
+    result = CliRunner().invoke(cli, ["image", "upscale", str(delivery), "-o", str(tmp_path / "out")])
+    assert result.exit_code == 1
+    assert "boom" in result.output
+
+
+def test_registered_image_check_exits_non_zero_when_a_part_is_missing(monkeypatch):
+    monkeypatch.setattr(image_cmd, "vulkan_loader", lambda: "vulkan-1")
+    result = CliRunner().invoke(cli, ["image", "check"])
+    assert result.exit_code == 1
+    assert "upscayl-bin" in result.output
+    assert "missing" in result.output
+
+
+def test_registered_image_check_is_happy_on_a_complete_machine(monkeypatch, installed):
+    monkeypatch.setattr(image_cmd, "vulkan_loader", lambda: "vulkan-1")
+    result = CliRunner().invoke(cli, ["image", "check"])
+    assert result.exit_code == 0
+    assert "missing" not in result.output
+
+
+def test_registered_image_install_reuses_what_is_already_there(monkeypatch, installed):
+    monkeypatch.setattr(image_cmd, "vulkan_loader", lambda: "vulkan-1")
+    result = CliRunner().invoke(cli, ["image", "install"])
+    assert result.exit_code == 0
+    assert ncnn.DEFAULT_MODEL in result.output
