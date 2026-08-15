@@ -682,6 +682,15 @@ def _poster(calls, image=None, failure=None):
     return post
 
 
+def _series(values):
+    remaining = list(values)
+
+    def measured(*args, **kwargs):
+        return remaining.pop(0) if len(remaining) > 1 else remaining[0]
+
+    return measured
+
+
 def _image_runner(calls):
     def run(cmd):
         Image = imaging.load_pillow()
@@ -759,6 +768,32 @@ def test_preset_rim_lift_max_sits_above_both_engines_and_below_a_backdrop_drift(
     assert passing < core.RIM_LIFT_MAX < evidence["gemini_backdrop_drift"]
     assert core.preset("asset")["rim_lift_max"] == core.RIM_LIFT_MAX
     assert "rim_lift_max" in core.PRESETS["asset"]
+
+
+def test_preset_rim_lift_min_mirrors_the_max_and_brackets_the_crushed_rim():
+    evidence = core.RIM_LIFT_EVIDENCE
+    assert evidence["gemini_crushed_rim"] < core.RIM_LIFT_MIN < evidence["gemini_clean_node"]
+    assert core.RIM_LIFT_MIN == -core.RIM_LIFT_MAX
+    assert core.RIM_LIFT_MIN - evidence["gemini_crushed_rim"] == pytest.approx(100.0)
+    assert evidence["gemini_clean_node"] - core.RIM_LIFT_MIN == pytest.approx(21.8)
+    assert core.preset("asset")["rim_lift_min"] == core.RIM_LIFT_MIN
+    assert "rim_lift_min" in core.PRESETS["asset"]
+
+
+def test_preset_fidelity_floor_sits_midway_between_the_repaints_and_the_faithful_renders():
+    evidence = core.FIDELITY_EVIDENCE
+    repainted = max(evidence["gemini_repainted_panel"], evidence["gemini_crushed_rim"])
+    faithful = min(
+        evidence["gemini_ornate_frame"],
+        evidence["gemini_clean_node"],
+        evidence["ncnn_connector"],
+        evidence["ncnn_card_frame"],
+    )
+    assert repainted < core.FIDELITY_DB_MIN < faithful
+    assert core.FIDELITY_DB_MIN - repainted == pytest.approx(9.72)
+    assert faithful - core.FIDELITY_DB_MIN == pytest.approx(9.75)
+    assert core.preset("asset")["fidelity_db_min"] == core.FIDELITY_DB_MIN
+    assert "fidelity_db_min" in core.PRESETS["asset"]
 
 
 def test_preset_rejects_an_unknown_name():
@@ -900,13 +935,89 @@ def test_fallback_table_follows_the_rim_lift_against_the_limit(
         assert record["fallback"] == f"rim lift {measured} > {limit}"
 
 
-def test_fallback_table_never_reads_the_fidelity_number(monkeypatch, tmp_path, delivery, installed):
-    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: 0.0)
-    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 3.0)
+@pytest.mark.parametrize(
+    "measured,floor,engine,fell_back",
+    [
+        (-19.9, -20.0, "gemini", False),
+        (-20.0, -20.0, "gemini", False),
+        (-20.1, -20.0, "ncnn", True),
+        (-120.0, -20.0, "ncnn", True),
+        (-8.0, -5.0, "ncnn", True),
+    ],
+    ids=["just-inside", "on-the-line", "just-under", "crushed", "below-a-strict-floor"],
+)
+def test_fallback_table_catches_a_rim_crushed_darker_than_the_source(
+    monkeypatch, tmp_path, delivery, installed, measured, floor, engine, fell_back
+):
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 42.0)
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: measured)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini", rim_lift_min=floor))[0]
+    assert record["engine"] == engine
+    assert ("fallback" in record) is fell_back
+    if fell_back:
+        assert record["fallback"] == f"rim lift {measured} < {floor}"
+
+
+def test_fallback_now_reads_the_fidelity_number_the_rim_bound_cannot_see(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: 5.9)
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 6.19)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
+    assert record["engine"] == "ncnn"
+    assert record["fallback"] == "fidelity 6.19 dB < 20.0 dB"
+
+
+def test_fallback_keeps_a_candidate_the_rim_and_the_floor_both_clear(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: 4.1)
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 29.75)
     record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
     assert record["engine"] == "gemini"
-    assert record["fidelity_db"] == 3.0
     assert "fallback" not in record
+    assert "rejected" not in record
+
+
+@pytest.mark.parametrize(
+    "name,measured,db,engine",
+    [
+        ("background_panel", 5.9, 6.19, "ncnn"),
+        ("spine_tile_vertical", -120.0, 10.28, "ncnn"),
+        ("card_frame_left", 4.1, 29.75, "gemini"),
+        ("node_primary", 1.8, 37.53, "gemini"),
+        ("card_frame_right", 32.0, 44.31, "ncnn"),
+        ("connector_straight", 75.3, 41.72, "ncnn"),
+    ],
+)
+def test_gate_replays_the_paid_run_over_the_first_theme(
+    monkeypatch, tmp_path, delivery, installed, name, measured, db, engine
+):
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: measured)
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: db)
+    record = _process(delivery, tmp_path / name, settings=core.preset(provider="gemini"))[0]
+    assert record["engine"] == engine
+
+
+def test_gate_records_the_shift_without_judging_it(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(core, "find_shift", lambda *args, **kwargs: (6, 9, 0.033))
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: 1.8)
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 37.53)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
+    assert record["shift"] == [6, 9]
+    assert record["engine"] == "gemini"
+    assert "fallback" not in record
+
+
+def test_report_row_separates_the_rejected_candidate_from_the_shipped_file(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(core, "rim_lift", _series([5.9, 5.8]))
+    monkeypatch.setattr(core, "fidelity", _series([6.19, 44.31]))
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
+    rejected = record["rejected"]
+    assert (record["engine"], record["fidelity_db"], record["rim_lift"]) == ("ncnn", 44.31, 5.8)
+    assert (rejected["engine"], rejected["fidelity_db"], rejected["rim_lift"]) == ("gemini", 6.19, 5.9)
+    assert set(rejected) == {"engine", "shift", "peak", "fidelity_db", "rim_lift"}
+    assert record["fallback"] == "fidelity 6.19 dB < 20.0 dB"
+    assert {"file", "engine", "fidelity_db", "shift", "rim_lift"} <= set(record)
+    report = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    assert report[0]["rejected"] == rejected
+    assert report[0]["fidelity_db"] == 44.31
 
 
 def test_core_falls_back_when_the_upstream_call_fails(tmp_path, delivery, installed):
@@ -918,7 +1029,8 @@ def test_core_falls_back_when_the_upstream_call_fails(tmp_path, delivery, instal
     assert len(runs) == 1
 
 
-def test_core_lifts_a_target_larger_than_what_came_back(tmp_path, delivery, installed):
+def test_core_lifts_a_target_larger_than_what_came_back(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(core, "find_shift", lambda *args, **kwargs: (0, 0, 1.0))
     runs = []
     small = _flattened(_badge(size=100))
     record = _process(delivery, tmp_path / "out", runs=runs, image=small)[0]
@@ -974,6 +1086,7 @@ def test_core_shrinks_the_local_input_but_still_delivers_the_source_size(monkeyp
 
 def test_core_guards_the_lift_path_too(monkeypatch, tmp_path, delivery, installed):
     monkeypatch.setattr(ncnn, "BUFFER_LIMIT", 2_000_000)
+    monkeypatch.setattr(core, "find_shift", lambda *args, **kwargs: (0, 0, 1.0))
     seen = []
     record = _process(delivery, tmp_path / "out", image=_flattened(_badge(size=100)), runner=_fed_runner(seen))[0]
     assert record["engine"] == "gemini"

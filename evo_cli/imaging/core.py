@@ -22,8 +22,20 @@ RIM_LIFT_EVIDENCE = {
     "gemini_white_backdrop": 15.6,
     "gemini_backdrop_drift": 155.0,
     "ncnn_control": 5.8,
+    "gemini_crushed_rim": -120.0,
+    "gemini_clean_node": 1.8,
 }
 RIM_LIFT_MAX = 20.0
+RIM_LIFT_MIN = -20.0
+FIDELITY_EVIDENCE = {
+    "gemini_repainted_panel": 6.19,
+    "gemini_crushed_rim": 10.28,
+    "gemini_ornate_frame": 29.75,
+    "gemini_clean_node": 37.53,
+    "ncnn_connector": 41.72,
+    "ncnn_card_frame": 44.31,
+}
+FIDELITY_DB_MIN = 20.0
 REPORT_NAME = "report.json"
 FAILED_FIELDS = (
     "engine",
@@ -51,6 +63,8 @@ PRESETS = {
         "master_scale": 1.0,
         "declared_ratio": DECLARED_RATIO,
         "rim_lift_max": RIM_LIFT_MAX,
+        "rim_lift_min": RIM_LIFT_MIN,
+        "fidelity_db_min": FIDELITY_DB_MIN,
         "outputs": list(OUTPUT_SETS),
     }
 }
@@ -233,6 +247,19 @@ def _measure(frame, candidate, merge=True):
     return merged, metrics
 
 
+def _rejection(metrics, settings):
+    high = float(settings["rim_lift_max"])
+    low = float(settings["rim_lift_min"])
+    floor = float(settings["fidelity_db_min"])
+    if metrics["rim_lift"] > high:
+        return f"rim lift {metrics['rim_lift']} > {high}"
+    if metrics["rim_lift"] < low:
+        return f"rim lift {metrics['rim_lift']} < {low}"
+    if metrics["fidelity_db"] < floor:
+        return f"fidelity {metrics['fidelity_db']} dB < {floor} dB"
+    return None
+
+
 def _render(source, frame, settings, record, poster, runner):
     if settings["provider"] == "gemini":
         started = time.time()
@@ -244,13 +271,14 @@ def _render(source, frame, settings, record, poster, runner):
         else:
             record["gemini_s"] = round(time.time() - started, 1)
             merged, metrics = _measure(frame, candidate)
-            record.update(metrics)
-            limit = float(settings["rim_lift_max"])
-            if metrics["rim_lift"] <= limit:
+            reason = _rejection(metrics, settings)
+            if reason is None:
+                record.update(metrics)
                 record["engine"] = "gemini"
                 record["ncnn_s"] = 0.0
                 return merged, candidate.size
-            record["fallback"] = f"rim lift {metrics['rim_lift']} > {limit}"
+            record["fallback"] = reason
+            record["rejected"] = dict(metrics, engine="gemini")
 
     started = time.time()
     result = _call_ncnn(source, frame.size, settings, runner, record)
