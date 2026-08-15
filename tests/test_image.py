@@ -1,19 +1,21 @@
 import base64
 import io
+import json
 import subprocess
 import sys
+import threading
+import time
 import zipfile
 from pathlib import Path
 
 import pytest
 
 from evo_cli import console, imaging
-from evo_cli.imaging import align, gemini, ncnn
+from evo_cli.imaging import align, core, gemini, ncnn
 from evo_cli.imaging.errors import ImagingError
 
 PINNED_WINDOWS_ASSET = (
-    "https://github.com/upscayl/upscayl-ncnn/releases/download/"
-    "20251207-174704/upscayl-bin-20251207-174704-windows.zip"
+    "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-windows.zip"
 )
 
 GRID = 128
@@ -28,6 +30,8 @@ def sandbox(tmp_path, monkeypatch):
         pytest.fail("the test tried to spawn upscayl-bin")
 
     monkeypatch.setenv("EVO_UPSCAYL_DIR", str(tmp_path / "upscayl"))
+    monkeypatch.setenv("EVO_IMAGE_CACHE", str(tmp_path / "image-cache"))
+    monkeypatch.delenv("EVO_IMAGE_PROVIDER", raising=False)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(ncnn.shutil, "which", lambda name: None)
     monkeypatch.setattr(console, "download_file", no_network)
@@ -520,3 +524,317 @@ def test_gemini_upscale_surfaces_a_transport_failure():
     with pytest.raises(ImagingError) as excinfo:
         gemini.upscale(imaging.load_pillow().new("RGB", (32, 32)), poster=poster)
     assert "503" in str(excinfo.value)
+
+
+SOURCE_EDGE = 200
+
+
+def _encode(image):
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _source(path, image):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
+    return path
+
+
+def _poster(calls, image=None, failure=None):
+    def post(payload, model, timeout):
+        Image = imaging.load_pillow()
+        calls.append(model)
+        if failure is not None:
+            raise failure
+        if image is not None:
+            return _image_response(_encode(image))
+        sent = base64.b64decode(payload["contents"][0]["parts"][1]["inline_data"]["data"])
+        with Image.open(io.BytesIO(sent)) as handle:
+            return _image_response(_encode(handle.convert("RGB")))
+
+    return post
+
+
+def _image_runner(calls):
+    def run(cmd):
+        Image = imaging.load_pillow()
+        calls.append(cmd)
+        with Image.open(cmd[cmd.index("-i") + 1]) as handle:
+            frame = handle.convert("RGBA")
+        if "-r" in cmd:
+            width, height = cmd[cmd.index("-r") + 1].split("x")
+            frame = frame.resize((int(width), int(height)), Image.LANCZOS)
+        frame.save(cmd[cmd.index("-o") + 1])
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    return run
+
+
+@pytest.fixture
+def delivery(tmp_path):
+    _source(tmp_path / "in" / "theme" / "node_primary_64x64.png", _badge(size=SOURCE_EDGE))
+    return tmp_path / "in"
+
+
+def _process(root, out_dir, calls=None, runs=None, image=None, failure=None, settings=None, **kwargs):
+    return core.process_many(
+        core.find_sources(root),
+        out_dir,
+        root=root,
+        settings=settings or core.preset(provider="gemini"),
+        poster=_poster(calls if calls is not None else [], image=image, failure=failure),
+        runner=_image_runner(runs if runs is not None else []),
+        **kwargs,
+    )
+
+
+def _opened(path):
+    Image = imaging.load_pillow()
+    with Image.open(path) as handle:
+        return handle.mode, handle.size
+
+
+def test_preset_asset_carries_the_measured_defaults():
+    settings = core.preset("asset")
+    assert settings["outputs"] == ["master", "ui"]
+    assert settings["rim_lift_max"] == 20.0
+    assert settings["declared_ratio"] == 3.125
+    assert settings["master_scale"] == 1.0
+    assert settings["provider"] == "auto"
+
+
+def test_preset_rejects_an_unknown_name():
+    with pytest.raises(ImagingError) as excinfo:
+        core.preset("hero")
+    assert "asset" in str(excinfo.value)
+
+
+def test_preset_overrides_replace_only_what_is_given():
+    settings = core.preset("asset", provider="ncnn", model=None, rim_lift_max=5.0)
+    assert settings["provider"] == "ncnn"
+    assert settings["rim_lift_max"] == 5.0
+    assert settings["model"] == core.PRESETS["asset"]["model"]
+
+
+def test_core_resolve_provider_prefers_the_hosted_engine(monkeypatch):
+    monkeypatch.setattr(core, "has_gemini_credentials", lambda: True)
+    assert core.resolve_provider("auto") == "gemini"
+    monkeypatch.setattr(core, "has_gemini_credentials", lambda: False)
+    assert core.resolve_provider(None) == "ncnn"
+    assert core.resolve_provider("gemini") == "gemini"
+
+
+def test_core_resolve_provider_honours_the_environment_override(monkeypatch):
+    monkeypatch.setattr(core, "has_gemini_credentials", lambda: True)
+    monkeypatch.setenv("EVO_IMAGE_PROVIDER", "ncnn")
+    assert core.resolve_provider("auto") == "ncnn"
+    monkeypatch.setenv("EVO_IMAGE_PROVIDER", "topaz")
+    with pytest.raises(ImagingError):
+        core.resolve_provider("auto")
+
+
+def test_core_resolve_provider_rejects_an_unknown_name():
+    with pytest.raises(ImagingError) as excinfo:
+        core.resolve_provider("topaz")
+    assert "topaz" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "name,size,expected",
+    [
+        ("background_panel_2048x2048.png", (6400, 6400), (2048, 2048)),
+        ("card_frame_left_1200x800.png", (3750, 2500), (1200, 800)),
+        ("node_primary_256x256.png", (800, 800), (256, 256)),
+    ],
+)
+def test_core_declared_size_comes_from_the_filename(name, size, expected):
+    assert core.declared_size(name, size) == expected
+
+
+def test_core_declared_size_falls_back_to_the_delivery_ratio():
+    assert core.declared_size("logo.png", (800, 800)) == (256, 256)
+    assert core.declared_size("logo_v2.png", (3750, 2500)) == (1200, 800)
+
+
+def test_core_find_sources_walks_the_tree_and_skips_the_noise(tmp_path):
+    root = tmp_path / "in"
+    _source(root / "1. Theme" / "node_primary_256x256.png", _badge(size=32))
+    _source(root / "2. Theme" / "card_frame_left_1200x800.png", _badge(size=32))
+    _source(root / "__MACOSX" / "._node_primary_256x256.png", _badge(size=32))
+    (root / ".DS_Store").write_text("noise", encoding="utf-8")
+    (root / "readme.txt").write_text("noise", encoding="utf-8")
+    found = core.find_sources(root)
+    assert [path.name for path in found] == ["node_primary_256x256.png", "card_frame_left_1200x800.png"]
+    assert core.find_sources(found[0]) == [found[0]]
+
+
+def test_core_find_sources_reports_an_empty_tree(tmp_path):
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(ImagingError) as excinfo:
+        core.find_sources(tmp_path / "empty")
+    assert "no images" in str(excinfo.value)
+
+
+def test_core_writes_both_sizes_from_one_call(tmp_path, delivery):
+    calls = []
+    record = _process(delivery, tmp_path / "out", calls=calls)[0]
+    assert len(calls) == 1
+    assert record["engine"] == "gemini"
+    assert record["file"] == "theme/node_primary_64x64.png"
+    assert record["master_size"] == "200x200"
+    assert record["ui_size"] == "64x64"
+    assert _opened(tmp_path / "out" / "master" / "theme" / "node_primary_64x64.png") == ("RGBA", (200, 200))
+    assert _opened(tmp_path / "out" / "ui" / "theme" / "node_primary_64x64.png") == ("RGBA", (64, 64))
+
+
+def test_core_keeps_a_source_without_alpha_in_rgb(tmp_path):
+    root = tmp_path / "in"
+    _source(root / "background_panel_50x50.png", _badge(size=SOURCE_EDGE).convert("RGB"))
+    record = _process(root, tmp_path / "out")[0]
+    assert record["alpha"] is False
+    assert record["rim_lift"] == 0.0
+    assert _opened(tmp_path / "out" / "ui" / "background_panel_50x50.png") == ("RGB", (50, 50))
+
+
+def test_core_falls_back_when_the_rim_lift_crosses_the_threshold(tmp_path, delivery, installed):
+    calls = []
+    runs = []
+    drifted = _badge(size=SOURCE_EDGE, rim=127, backdrop=255).convert("RGB")
+    record = _process(delivery, tmp_path / "out", calls=calls, runs=runs, image=drifted)[0]
+    assert record["engine"] == "ncnn"
+    assert float(record["fallback"].split()[2]) > 20
+    assert len(calls) == 1
+    assert len(runs) == 1
+    assert _opened(tmp_path / "out" / "master" / "theme" / "node_primary_64x64.png") == ("RGBA", (200, 200))
+
+
+def test_core_threshold_decides_which_engine_ships(tmp_path, delivery, installed):
+    strict = _process(delivery, tmp_path / "strict", settings=core.preset(provider="gemini", rim_lift_max=-1.0))[0]
+    loose = _process(delivery, tmp_path / "loose", settings=core.preset(provider="gemini", rim_lift_max=999.0))[0]
+    assert strict["engine"] == "ncnn"
+    assert loose["engine"] == "gemini"
+
+
+def test_core_falls_back_when_the_upstream_call_fails(tmp_path, delivery, installed):
+    runs = []
+    record = _process(delivery, tmp_path / "out", runs=runs, failure=ImagingError("POST -> HTTP 500"))[0]
+    assert record["engine"] == "ncnn"
+    assert "500" in record["fallback"]
+    assert record["fidelity_db"] > 0
+    assert len(runs) == 1
+
+
+def test_core_lifts_a_target_larger_than_what_came_back(tmp_path, delivery, installed):
+    runs = []
+    small = _badge(size=100).convert("RGB")
+    record = _process(delivery, tmp_path / "out", runs=runs, image=small)[0]
+    assert record["engine"] == "gemini"
+    assert record["engine_size"] == "100x100"
+    assert record["master_via"] == "gemini+ncnn"
+    assert "ui_via" not in record
+    assert runs[0][runs[0].index("-r") + 1] == "200x200"
+
+
+def test_core_report_carries_the_keys_a_review_needs(tmp_path):
+    root = tmp_path / "in"
+    _source(root / "1. Theme" / "node_primary_64x64.png", _badge(size=SOURCE_EDGE))
+    _source(root / "2. Theme" / "card_frame_left_40x20.png", _badge(size=SOURCE_EDGE, body=140))
+    _process(root, tmp_path / "out")
+    report = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    need = {"file", "engine", "fidelity_db", "shift", "rim_lift"}
+    assert len(report) == 2
+    assert all(need <= set(item) for item in report)
+    assert all({"master_size", "ui_size", "total_s", "gemini_s", "ncnn_s"} <= set(item) for item in report)
+    assert [item["file"] for item in report] == [
+        "1. Theme/node_primary_64x64.png",
+        "2. Theme/card_frame_left_40x20.png",
+    ]
+    assert [item["cached"] for item in report] == [False, False]
+
+
+def test_core_keeps_the_local_engine_serial_across_jobs(tmp_path, installed):
+    root = tmp_path / "in"
+    sources = [_source(root / f"tile_{index}_32x32.png", _badge(size=96, body=100 + index)) for index in range(3)]
+    guard = threading.Lock()
+    state = {"active": 0, "peak": 0}
+    inner = _image_runner([])
+
+    def runner(cmd):
+        with guard:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        time.sleep(0.05)
+        result = inner(cmd)
+        with guard:
+            state["active"] -= 1
+        return result
+
+    records = core.process_many(
+        sources,
+        tmp_path / "out",
+        root=root,
+        settings=core.preset(provider="ncnn"),
+        jobs=3,
+        runner=runner,
+    )
+    assert [record["engine"] for record in records] == ["ncnn"] * 3
+    assert state["peak"] == 1
+
+
+def test_cache_makes_the_second_run_free(tmp_path, delivery):
+    calls = []
+    first = _process(delivery, tmp_path / "out", calls=calls)[0]
+    second = _process(delivery, tmp_path / "out", calls=calls)[0]
+    assert len(calls) == 1
+    assert first["cached"] is False
+    assert second["cached"] is True
+    assert second["fidelity_db"] == first["fidelity_db"]
+
+
+def test_cache_misses_when_a_setting_changes(tmp_path, delivery):
+    calls = []
+    _process(delivery, tmp_path / "out", calls=calls)
+    _process(delivery, tmp_path / "out", calls=calls, settings=core.preset(provider="gemini", image_size="2K"))
+    assert len(calls) == 2
+
+
+def test_cache_misses_when_the_source_changes(tmp_path, delivery):
+    calls = []
+    _process(delivery, tmp_path / "out", calls=calls)
+    _source(delivery / "theme" / "node_primary_64x64.png", _badge(size=SOURCE_EDGE, body=160))
+    _process(delivery, tmp_path / "out", calls=calls)
+    assert len(calls) == 2
+
+
+def test_cache_rebuilds_a_missing_output_without_a_new_call(tmp_path, delivery):
+    calls = []
+    _process(delivery, tmp_path / "out", calls=calls)
+    lost = tmp_path / "out" / "ui" / "theme" / "node_primary_64x64.png"
+    lost.unlink()
+    record = _process(delivery, tmp_path / "out", calls=calls)[0]
+    assert len(calls) == 1
+    assert record["cached"] is True
+    assert _opened(lost) == ("RGBA", (64, 64))
+
+
+def test_cache_force_ignores_the_stored_result(tmp_path, delivery):
+    calls = []
+    _process(delivery, tmp_path / "out", calls=calls)
+    record = _process(delivery, tmp_path / "out", calls=calls, force=True)[0]
+    assert len(calls) == 2
+    assert record["cached"] is False
+
+
+def test_cache_dry_run_counts_what_is_already_there(tmp_path, delivery):
+    calls = []
+    assert _process(delivery, tmp_path / "out", calls=calls, dry_run=True) == [
+        {"file": "theme/node_primary_64x64.png", "engine": None, "cached": False}
+    ]
+    assert calls == []
+    assert not (tmp_path / "out" / "report.json").exists()
+    _process(delivery, tmp_path / "out", calls=calls)
+    assert _process(delivery, tmp_path / "out", calls=calls, dry_run=True) == [
+        {"file": "theme/node_primary_64x64.png", "engine": "gemini", "cached": True}
+    ]
+    assert len(calls) == 1
