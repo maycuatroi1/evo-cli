@@ -276,6 +276,12 @@ def _badge(body=100, rim=100, backdrop=0, rim_alpha=128, size=GRID):
     return Image.fromarray(data, "RGBA")
 
 
+def _flattened(image, backdrop=255):
+    Image = imaging.load_pillow()
+    ground = Image.new("RGBA", image.size, (backdrop, backdrop, backdrop, 255))
+    return Image.alpha_composite(ground, image.convert("RGBA")).convert("RGB")
+
+
 def _roll(image, dy, dx):
     numpy = imaging.load_numpy()
     Image = imaging.load_pillow()
@@ -355,6 +361,36 @@ def test_align_rim_lift_orders_the_merge_the_drift_and_the_control():
 def test_align_rim_lift_reads_the_rim_of_an_rgb_candidate():
     source = _badge()
     assert align.rim_lift(source, _badge(rim=127).convert("RGB"), grid=GRID) > 20
+
+
+def test_align_rim_lift_clears_a_faithful_candidate_rendered_on_a_white_backdrop():
+    source = _badge()
+    assert align.rim_lift(source, _flattened(source), grid=GRID) == pytest.approx(0.0, abs=1.0)
+
+
+def test_align_rim_lift_rejects_a_white_backdrop_that_swallowed_the_rim():
+    source = _badge()
+    assert align.rim_lift(source, _badge(rim=255, backdrop=255).convert("RGB"), grid=GRID) > 100
+
+
+def test_align_rim_lift_reads_the_same_number_with_or_without_engine_alpha():
+    source = _badge()
+    engine = _badge(rim=115)
+    carried = align.rim_lift(source, engine, grid=GRID)
+    baked = align.rim_lift(source, _flattened(engine), grid=GRID)
+    assert carried == pytest.approx(15.0, abs=0.5)
+    assert baked == pytest.approx(carried, abs=1.0)
+
+
+def test_align_rim_lift_follows_the_shift_back_onto_the_candidate_edge():
+    source = _badge()
+    drifted = _flattened(_roll(_badge(), 7, -3))
+    shift = align.find_shift(source, drifted, grid=GRID)[:2]
+    assert shift == (-7, 3)
+    aligned = align.rim_lift(source, drifted, shift, grid=GRID)
+    ignored = align.rim_lift(source, drifted, grid=GRID)
+    assert aligned == pytest.approx(0.0, abs=1.0)
+    assert ignored > aligned + 15
 
 
 def test_align_rim_lift_is_zero_without_a_source_rim():
@@ -574,7 +610,7 @@ def _poster(calls, image=None, failure=None):
             return _image_response(_encode(image))
         sent = base64.b64decode(payload["contents"][0]["parts"][1]["inline_data"]["data"])
         with Image.open(io.BytesIO(sent)) as handle:
-            return _image_response(_encode(handle.convert("RGB")))
+            return _image_response(_encode(_flattened(handle)))
 
     return post
 
@@ -625,6 +661,14 @@ def test_preset_asset_carries_the_measured_defaults():
     assert settings["declared_ratio"] == 3.125
     assert settings["master_scale"] == 1.0
     assert settings["provider"] == "auto"
+
+
+def test_preset_rim_lift_max_sits_above_both_engines_and_below_a_backdrop_drift():
+    evidence = core.RIM_LIFT_EVIDENCE
+    passing = max(evidence["gemini_white_backdrop"], evidence["ncnn_control"])
+    assert passing < core.RIM_LIFT_MAX < evidence["gemini_backdrop_drift"]
+    assert core.preset("asset")["rim_lift_max"] == core.RIM_LIFT_MAX
+    assert "rim_lift_max" in core.PRESETS["asset"]
 
 
 def test_preset_rejects_an_unknown_name():
@@ -723,7 +767,7 @@ def test_core_keeps_a_source_without_alpha_in_rgb(tmp_path):
 def test_core_falls_back_when_the_rim_lift_crosses_the_threshold(tmp_path, delivery, installed):
     calls = []
     runs = []
-    drifted = _badge(size=SOURCE_EDGE, rim=127, backdrop=255).convert("RGB")
+    drifted = _badge(size=SOURCE_EDGE, rim=255, backdrop=255).convert("RGB")
     record = _process(delivery, tmp_path / "out", calls=calls, runs=runs, image=drifted)[0]
     assert record["engine"] == "ncnn"
     assert float(record["fallback"].split()[2]) > 20
@@ -786,7 +830,7 @@ def test_core_falls_back_when_the_upstream_call_fails(tmp_path, delivery, instal
 
 def test_core_lifts_a_target_larger_than_what_came_back(tmp_path, delivery, installed):
     runs = []
-    small = _badge(size=100).convert("RGB")
+    small = _flattened(_badge(size=100))
     record = _process(delivery, tmp_path / "out", runs=runs, image=small)[0]
     assert record["engine"] == "gemini"
     assert record["engine_size"] == "100x100"

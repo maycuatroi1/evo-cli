@@ -18,6 +18,11 @@ PROVIDERS = ("gemini", "ncnn")
 OUTPUT_SETS = ("master", "ui")
 DEFAULT_PRESET = "asset"
 DECLARED_RATIO = 3.125
+RIM_LIFT_EVIDENCE = {
+    "gemini_white_backdrop": 15.6,
+    "gemini_backdrop_drift": 155.0,
+    "ncnn_control": 5.8,
+}
 RIM_LIFT_MAX = 20.0
 REPORT_NAME = "report.json"
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
@@ -191,7 +196,7 @@ def _measure(frame, candidate, merge=True):
         "shift": [dy, dx],
         "peak": round(peak, 3),
         "fidelity_db": round(fidelity(frame, candidate), 2),
-        "rim_lift": round(rim_lift(frame, merged), 1),
+        "rim_lift": round(rim_lift(frame, candidate, (dy, dx)), 1),
     }
     return merged, metrics
 

@@ -6,6 +6,8 @@ RIM_GRID = 800
 OPAQUE_LEVEL = 250
 RIM_LOW = 40
 RIM_HIGH = 215
+CLEAR_LEVEL = 12
+MIN_COVERAGE = 0.15
 MIN_OPAQUE_RATIO = 0.02
 MIN_RIM_PIXELS = 50
 MAX_PSNR = 99.0
@@ -62,8 +64,7 @@ def fidelity(reference, candidate, grid=FIDELITY_GRID):
     return min(float(10 * numpy.log10(255.0**2 / error)), MAX_PSNR)
 
 
-def _rim_gap(image, alpha, grid):
-    luma = _grey(image, grid)
+def _rim_gap(luma, alpha):
     rim = (alpha > RIM_LOW) & (alpha < RIM_HIGH)
     body = alpha >= RIM_HIGH
     if rim.sum() < MIN_RIM_PIXELS or body.sum() < MIN_RIM_PIXELS:
@@ -71,18 +72,45 @@ def _rim_gap(image, alpha, grid):
     return float(luma[rim].mean() - luma[body].mean())
 
 
-def rim_lift(reference, candidate, grid=RIM_GRID):
-    source_alpha = _alpha(reference, grid)
-    if source_alpha is None:
+def _backdrop(luma, alpha):
+    numpy = load_numpy()
+    clear = alpha <= CLEAR_LEVEL
+    if clear.sum() < MIN_RIM_PIXELS:
+        return None
+    return float(numpy.median(luma[clear]))
+
+
+def _straight(luma, alpha, backdrop):
+    numpy = load_numpy()
+    coverage = numpy.maximum(alpha.astype(numpy.float32) / 255.0, MIN_COVERAGE)
+    return numpy.clip((luma - (1.0 - coverage) * backdrop) / coverage, 0.0, 255.0)
+
+
+def _aligned(alpha, shift, size, grid):
+    numpy = load_numpy()
+    width, height = size
+    dy = round(shift[0] * grid / height)
+    dx = round(shift[1] * grid / width)
+    if not (dy or dx):
+        return alpha
+    return numpy.roll(numpy.roll(alpha, -dy, 0), -dx, 1)
+
+
+def rim_lift(reference, candidate, shift=(0, 0), grid=RIM_GRID):
+    alpha = _alpha(reference, grid)
+    if alpha is None:
         return 0.0
-    merged_alpha = _alpha(candidate, grid)
-    if merged_alpha is None:
-        merged_alpha = source_alpha
-    source_gap = _rim_gap(reference, source_alpha, grid)
-    merged_gap = _rim_gap(candidate, merged_alpha, grid)
-    if source_gap is None or merged_gap is None:
+    source_gap = _rim_gap(_grey(reference, grid), alpha)
+    rim_alpha = _aligned(alpha, shift, reference.size, grid)
+    luma = _grey(candidate, grid)
+    if "A" not in candidate.getbands():
+        backdrop = _backdrop(luma, rim_alpha)
+        if backdrop is not None:
+            luma = _straight(luma, rim_alpha, backdrop)
+    candidate_gap = _rim_gap(luma, rim_alpha)
+    if source_gap is None or candidate_gap is None:
         return 0.0
-    return merged_gap - source_gap
+    return candidate_gap - source_gap
 
 
 def restore_alpha(source, candidate, shift=(0, 0)):
