@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import Lock
 
 from evo_cli.imaging import gemini, load_pillow, ncnn
-from evo_cli.imaging.align import fidelity, find_shift, restore_alpha, rim_lift
+from evo_cli.imaging.align import carry_alpha, fidelity, find_shift, restore_alpha, rim_lift
 from evo_cli.imaging.creds import has_gemini_credentials
 from evo_cli.imaging.errors import ImagingError
 
@@ -25,6 +25,18 @@ RIM_LIFT_EVIDENCE = {
 }
 RIM_LIFT_MAX = 20.0
 REPORT_NAME = "report.json"
+FAILED_FIELDS = (
+    "engine",
+    "engine_size",
+    "shift",
+    "peak",
+    "fidelity_db",
+    "rim_lift",
+    "source_size",
+    "master_size",
+    "ui_size",
+    "total_s",
+)
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 SKIP_DIRS = ("__MACOSX",)
 SIZE_RE = re.compile(r"_(\d+)x(\d+)$")
@@ -172,21 +184,41 @@ def _call_gemini(frame, settings, poster):
         return handle.convert("RGB")
 
 
-def _call_ncnn(source, size, settings, runner):
+def _stage(source, staged):
+    Image = load_pillow()
+    with Image.open(source) as handle:
+        alpha = "A" in handle.getbands() or "transparency" in handle.info
+        if ncnn.fits_buffer(handle.size, 4 if alpha else 3):
+            return Path(source), None, None
+        native = ncnn.safe_size(handle.size, 3)
+        frame = handle.convert("RGBA")
+    band = frame.split()[-1] if alpha else None
+    body = frame.convert("RGB")
+    if body.size != native:
+        body = body.resize(native, Image.LANCZOS)
+    body.save(staged)
+    return staged, band, native
+
+
+def _call_ncnn(source, size, settings, runner, record=None):
     Image = load_pillow()
     with tempfile.TemporaryDirectory() as tmp:
+        fed, band, native = _stage(source, Path(tmp) / "staged.png")
+        if native is not None and record is not None:
+            record["ncnn_input"] = f"rgb {_label_size(native)}"
         target = Path(tmp) / "upscaled.png"
         with GPU_LOCK:
-            ncnn.upscale(source, target, model=settings["model"], size=size, runner=runner)
+            ncnn.upscale(fed, target, model=settings["model"], size=size, runner=runner)
         with Image.open(target) as handle:
-            return handle.convert("RGBA")
+            result = handle.convert("RGBA")
+    return carry_alpha(band, result) if band is not None else result
 
 
-def _lift(image, size, settings, runner):
+def _lift(image, size, settings, runner, record=None):
     with tempfile.TemporaryDirectory() as tmp:
         staged = Path(tmp) / "staged.png"
         image.save(staged)
-        return _call_ncnn(staged, size, settings, runner)
+        return _call_ncnn(staged, size, settings, runner, record)
 
 
 def _measure(frame, candidate, merge=True):
@@ -221,7 +253,7 @@ def _render(source, frame, settings, record, poster, runner):
             record["fallback"] = f"rim lift {metrics['rim_lift']} > {limit}"
 
     started = time.time()
-    result = _call_ncnn(source, frame.size, settings, runner)
+    result = _call_ncnn(source, frame.size, settings, runner, record)
     record["ncnn_s"] = round(time.time() - started, 1)
     record["engine"] = "ncnn"
     merged, metrics = _measure(frame, result, merge=False)
@@ -282,7 +314,7 @@ def process_one(
         picture = base
         if native[0] < target[0] or native[1] < target[1]:
             lifted = time.time()
-            picture = _lift(base, target, settings, runner)
+            picture = _lift(base, target, settings, runner, record)
             record["ncnn_s"] = round(float(record.get("ncnn_s") or 0.0) + time.time() - lifted, 1)
             record[f"{label}_via"] = f"{record['engine']}+ncnn"
         if picture.size != target:
@@ -297,6 +329,13 @@ def process_one(
     record["total_s"] = round(time.time() - started, 1)
     _write_cache(record_path, record)
     return dict(record, cached=cached)
+
+
+def failed_record(source, root, error):
+    record = {"file": _relative(source, root).as_posix(), "error": str(error)}
+    record.update({key: None for key in FAILED_FIELDS})
+    record["cached"] = False
+    return record
 
 
 def write_report(out_dir, records):
@@ -356,7 +395,7 @@ def process_many(
         try:
             keep(index, work(index))
         except (ImagingError, OSError) as exc:
-            keep(index, {"file": _relative(sources[index], root).as_posix(), "error": str(exc)})
+            keep(index, failed_record(sources[index], root, exc))
 
     if dry_run or jobs <= 1 or len(sources) <= 1:
         for index in range(len(sources)):

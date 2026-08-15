@@ -27,6 +27,10 @@ MODEL_EXTS = ("bin", "param")
 
 BINARY_NAME = "upscayl-bin.exe" if os.name == "nt" else "upscayl-bin"
 
+MODEL_SCALE = 4
+BUFFER_LIMIT = 2**31
+SHRINK_STEP = 0.99
+
 
 def cache_dir():
     custom = os.environ.get("EVO_UPSCAYL_DIR")
@@ -129,6 +133,23 @@ def ensure_model(model=DEFAULT_MODEL, downloader=None):
     return target
 
 
+def buffer_bytes(size, channels):
+    return int(size[0]) * int(size[1]) * MODEL_SCALE * MODEL_SCALE * int(channels)
+
+
+def fits_buffer(size, channels):
+    return buffer_bytes(size, channels) < BUFFER_LIMIT
+
+
+def safe_size(size, channels):
+    width, height = int(size[0]), int(size[1])
+    while (width > 1 or height > 1) and not fits_buffer((width, height), channels):
+        factor = min(SHRINK_STEP, (BUFFER_LIMIT / buffer_bytes((width, height), channels)) ** 0.5)
+        width = max(1, int(width * factor))
+        height = max(1, int(height * factor))
+    return width, height
+
+
 def build_command(binary, src, dst, model, size, models_root):
     cmd = [str(binary), "-i", str(src), "-o", str(dst), "-m", str(models_root), "-n", model, "-f", "png"]
     if size:
@@ -140,10 +161,18 @@ def _run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
+def _exit_label(code):
+    if code < 0:
+        return f"killed by signal {-code}"
+    if code < 256:
+        return f"exit {code}"
+    return f"exit {code} (0x{code:08X})"
+
+
 def _tail(result):
     output = ((result.stdout or "") + (result.stderr or "")).strip()
     lines = [line for line in output.splitlines() if line.strip()]
-    return lines[-1] if lines else "no output"
+    return f"{_exit_label(result.returncode)}, last output: {lines[-1] if lines else 'no output'}"
 
 
 def upscale(src, dst, model=DEFAULT_MODEL, size=None, runner=None):

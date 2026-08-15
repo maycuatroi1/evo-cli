@@ -80,12 +80,12 @@ def _file_downloader(calls, body="weights"):
     return download
 
 
-def _runner(calls, returncode=0, produce=True):
+def _runner(calls, returncode=0, produce=True, stderr="upscayl-bin: something went wrong"):
     def run(cmd):
         calls.append(cmd)
         if produce:
             Path(cmd[cmd.index("-o") + 1]).write_text("png", encoding="utf-8")
-        return subprocess.CompletedProcess(cmd, returncode, "", "upscayl-bin: something went wrong")
+        return subprocess.CompletedProcess(cmd, returncode, "", stderr)
 
     return run
 
@@ -224,6 +224,55 @@ def test_ncnn_upscale_raises_when_the_binary_fails(installed, tmp_path):
     with pytest.raises(ImagingError) as excinfo:
         ncnn.upscale(src, tmp_path / "out.png", runner=_runner([], returncode=1, produce=False))
     assert "something went wrong" in str(excinfo.value)
+    assert "exit 1" in str(excinfo.value)
+
+
+def test_ncnn_upscale_names_the_crash_instead_of_the_last_progress_line(installed, tmp_path):
+    src = tmp_path / "in.png"
+    src.write_text("png", encoding="utf-8")
+    crash = _runner([], returncode=3221225477, produce=False, stderr="0.00%\n87.40%")
+    with pytest.raises(ImagingError) as excinfo:
+        ncnn.upscale(src, tmp_path / "out.png", runner=crash)
+    message = str(excinfo.value)
+    assert "0xC0000005" in message
+    assert message.index("3221225477") < message.index("87.40%")
+
+
+def test_ncnn_upscale_names_a_signal_on_posix(installed, tmp_path):
+    src = tmp_path / "in.png"
+    src.write_text("png", encoding="utf-8")
+    with pytest.raises(ImagingError) as excinfo:
+        ncnn.upscale(src, tmp_path / "out.png", runner=_runner([], returncode=-11, produce=False))
+    assert "killed by signal 11" in str(excinfo.value)
+
+
+def test_ncnn_buffer_limit_matches_the_measured_crash_thresholds():
+    assert ncnn.buffer_bytes((6400, 6400), 4) == 2621440000
+    assert ncnn.buffer_bytes((6400, 6400), 3) == 1966080000
+    assert not ncnn.fits_buffer((6400, 6400), 4)
+    assert ncnn.fits_buffer((6400, 6400), 3)
+    assert ncnn.fits_buffer((5792, 5792), 4) and not ncnn.fits_buffer((5793, 5793), 4)
+    assert ncnn.fits_buffer((6688, 6688), 3) and not ncnn.fits_buffer((6689, 6689), 3)
+    assert ncnn.fits_buffer((3750, 2500), 4)
+
+
+def test_ncnn_safe_size_only_shrinks_what_cannot_fit():
+    assert ncnn.safe_size((6400, 6400), 3) == (6400, 6400)
+    assert ncnn.safe_size((3750, 2500), 4) == (3750, 2500)
+    shrunk = ncnn.safe_size((6400, 6400), 4)
+    assert shrunk == (5792, 5792)
+    assert ncnn.fits_buffer(shrunk, 4)
+
+
+def test_ncnn_safe_size_keeps_the_aspect_ratio_of_a_huge_frame():
+    shrunk = ncnn.safe_size((40000, 20000), 3)
+    assert ncnn.fits_buffer(shrunk, 3)
+    assert shrunk[0] == pytest.approx(shrunk[1] * 2, rel=0.01)
+
+
+def test_ncnn_safe_size_terminates_on_an_absurd_frame():
+    assert ncnn.safe_size((10**6, 10**6), 4) == ncnn.safe_size((10**6, 10**6), 4)
+    assert ncnn.fits_buffer(ncnn.safe_size((10**6, 10**6), 4), 4)
 
 
 def test_ncnn_module_never_imports_pillow_or_numpy():
@@ -424,6 +473,24 @@ def test_align_restore_alpha_puts_the_rim_back_over_the_drifted_edge():
     naive = numpy.asarray(align.restore_alpha(source, drifted))
     under_rim = naive[naive[:, :, 3] == 128][:, 0]
     assert 255 in set(numpy.unique(under_rim))
+
+
+def test_align_carry_alpha_lifts_the_band_onto_a_bigger_candidate():
+    Image = imaging.load_pillow()
+    numpy = imaging.load_numpy()
+    source = _badge()
+    bigger = _badge(rim=177, backdrop=255).convert("RGB").resize((GRID * 2, GRID * 2), Image.LANCZOS)
+    merged = align.carry_alpha(source.split()[-1], bigger)
+    assert merged.mode == "RGBA"
+    assert merged.size == (GRID * 2, GRID * 2)
+    assert set(numpy.unique(numpy.asarray(merged.split()[-1]))) >= {0, 255}
+
+
+def test_align_carry_alpha_keeps_a_matching_band_untouched():
+    numpy = imaging.load_numpy()
+    source = _badge()
+    merged = align.carry_alpha(source.split()[-1], _badge(rim=177).convert("RGB"))
+    assert numpy.array_equal(numpy.asarray(merged.split()[-1]), numpy.asarray(source.split()[-1]))
 
 
 def test_align_restore_alpha_resizes_the_candidate_to_the_source():
@@ -630,20 +697,43 @@ def _image_runner(calls):
     return run
 
 
+def _fed_runner(seen):
+    inner = _image_runner([])
+
+    def run(cmd):
+        Image = imaging.load_pillow()
+        with Image.open(cmd[cmd.index("-i") + 1]) as handle:
+            seen.append((handle.mode, handle.size))
+        return inner(cmd)
+
+    return run
+
+
+def _picky_runner(bad):
+    inner = _image_runner([])
+
+    def run(cmd):
+        if bad in Path(cmd[cmd.index("-i") + 1]).name:
+            return subprocess.CompletedProcess(cmd, 3221225477, "", "0.00%\n87.40%")
+        return inner(cmd)
+
+    return run
+
+
 @pytest.fixture
 def delivery(tmp_path):
     _source(tmp_path / "in" / "theme" / "node_primary_64x64.png", _badge(size=SOURCE_EDGE))
     return tmp_path / "in"
 
 
-def _process(root, out_dir, calls=None, runs=None, image=None, failure=None, settings=None, **kwargs):
+def _process(root, out_dir, calls=None, runs=None, image=None, failure=None, settings=None, runner=None, **kwargs):
     return core.process_many(
         core.find_sources(root),
         out_dir,
         root=root,
         settings=settings or core.preset(provider="gemini"),
         poster=_poster(calls if calls is not None else [], image=image, failure=failure),
-        runner=_image_runner(runs if runs is not None else []),
+        runner=runner or _image_runner(runs if runs is not None else []),
         **kwargs,
     )
 
@@ -837,6 +927,82 @@ def test_core_lifts_a_target_larger_than_what_came_back(tmp_path, delivery, inst
     assert record["master_via"] == "gemini+ncnn"
     assert "ui_via" not in record
     assert runs[0][runs[0].index("-r") + 1] == "200x200"
+
+
+def _alpha_of(path):
+    Image = imaging.load_pillow()
+    numpy = imaging.load_numpy()
+    with Image.open(path) as handle:
+        return numpy.asarray(handle.convert("RGBA").split()[-1])
+
+
+def test_core_feeds_the_local_engine_the_source_file_when_it_fits(tmp_path, delivery, installed):
+    seen = []
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="ncnn"), runner=_fed_runner(seen))[0]
+    assert seen == [("RGBA", (SOURCE_EDGE, SOURCE_EDGE))]
+    assert "ncnn_input" not in record
+
+
+def test_core_feeds_three_channels_when_the_fourth_would_overflow(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(ncnn, "BUFFER_LIMIT", 2_000_000)
+    seen = []
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="ncnn"), runner=_fed_runner(seen))[0]
+    assert seen == [("RGB", (SOURCE_EDGE, SOURCE_EDGE))]
+    assert record["ncnn_input"] == f"rgb {SOURCE_EDGE}x{SOURCE_EDGE}"
+    assert record["master_size"] == f"{SOURCE_EDGE}x{SOURCE_EDGE}"
+
+    numpy = imaging.load_numpy()
+    master = tmp_path / "out" / "master" / "theme" / "node_primary_64x64.png"
+    assert _opened(master) == ("RGBA", (SOURCE_EDGE, SOURCE_EDGE))
+    assert numpy.array_equal(_alpha_of(master), _alpha_of(delivery / "theme" / "node_primary_64x64.png"))
+
+
+def test_core_shrinks_the_local_input_but_still_delivers_the_source_size(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(ncnn, "BUFFER_LIMIT", 1_000_000)
+    seen = []
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="ncnn"), runner=_fed_runner(seen))[0]
+    mode, fed = seen[0]
+    assert mode == "RGB"
+    assert fed[0] < SOURCE_EDGE and ncnn.fits_buffer(fed, 3)
+    assert record["ncnn_input"] == f"rgb {fed[0]}x{fed[1]}"
+    assert record["master_size"] == f"{SOURCE_EDGE}x{SOURCE_EDGE}"
+    assert _opened(tmp_path / "out" / "master" / "theme" / "node_primary_64x64.png") == (
+        "RGBA",
+        (SOURCE_EDGE, SOURCE_EDGE),
+    )
+
+
+def test_core_guards_the_lift_path_too(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(ncnn, "BUFFER_LIMIT", 2_000_000)
+    seen = []
+    record = _process(delivery, tmp_path / "out", image=_flattened(_badge(size=100)), runner=_fed_runner(seen))[0]
+    assert record["engine"] == "gemini"
+    assert record["master_via"] == "gemini+ncnn"
+    assert seen == [("RGB", (SOURCE_EDGE, SOURCE_EDGE))]
+    assert record["ncnn_input"] == f"rgb {SOURCE_EDGE}x{SOURCE_EDGE}"
+    assert _opened(tmp_path / "out" / "master" / "theme" / "node_primary_64x64.png") == (
+        "RGBA",
+        (SOURCE_EDGE, SOURCE_EDGE),
+    )
+
+
+def test_core_report_names_a_file_the_engine_could_not_render(tmp_path, installed):
+    root = tmp_path / "in"
+    _source(root / "1. Theme" / "node_primary_64x64.png", _badge(size=SOURCE_EDGE))
+    _source(root / "2. Theme" / "background_panel_64x64.png", _badge(size=SOURCE_EDGE, body=140))
+    records = _process(root, tmp_path / "out", settings=core.preset(provider="ncnn"), runner=_picky_runner("panel"))
+    report = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    need = {"file", "engine", "fidelity_db", "shift", "rim_lift"}
+    assert len(report) == 2
+    assert all(need <= set(item) for item in report)
+    assert all({"master_size", "ui_size", "total_s", "cached"} <= set(item) for item in report)
+    failed = [item for item in report if item.get("error")]
+    assert [item["file"] for item in failed] == ["2. Theme/background_panel_64x64.png"]
+    assert failed[0]["engine"] is None
+    assert failed[0]["fidelity_db"] is None
+    assert failed[0]["cached"] is False
+    assert "0xC0000005" in failed[0]["error"] and "87.40%" in failed[0]["error"]
+    assert records[1]["error"] == failed[0]["error"]
 
 
 def test_core_report_carries_the_keys_a_review_needs(tmp_path):

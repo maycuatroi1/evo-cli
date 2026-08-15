@@ -113,6 +113,16 @@ def rim_lift(reference, candidate, shift=(0, 0), grid=RIM_GRID):
     return candidate_gap - source_gap
 
 
+def carry_alpha(alpha, candidate):
+    Image = load_pillow()
+    merged = candidate.convert("RGBA")
+    band = alpha.convert("L")
+    if band.size != merged.size:
+        band = band.resize(merged.size, Image.LANCZOS)
+    merged.putalpha(band)
+    return merged
+
+
 def restore_alpha(source, candidate, shift=(0, 0)):
     numpy = load_numpy()
     Image = load_pillow()
@@ -125,6 +135,4 @@ def restore_alpha(source, candidate, shift=(0, 0)):
     if dy or dx:
         rolled = numpy.roll(numpy.roll(numpy.asarray(alpha), -dy, 0), -dx, 1)
         alpha = Image.fromarray(rolled)
-    merged = merged.convert("RGBA")
-    merged.putalpha(alpha)
-    return merged
+    return carry_alpha(alpha, merged)
