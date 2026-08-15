@@ -36,6 +36,14 @@ FIDELITY_EVIDENCE = {
     "ncnn_card_frame": 44.31,
 }
 FIDELITY_DB_MIN = 20.0
+SHIFT_PEAK_EVIDENCE = {
+    "gemini_connector_spurious": 0.029,
+    "highest_measured_shift": 0.080,
+    "lowest_shipped_zero_shift": 0.425,
+    "run_median": 0.740,
+    "run_max": 0.992,
+}
+SHIFT_PEAK_MIN = 0.25
 REPORT_NAME = "report.json"
 FAILED_FIELDS = (
     "engine",
@@ -235,15 +243,24 @@ def _lift(image, size, settings, runner, record=None):
         return _call_ncnn(staged, size, settings, runner, record)
 
 
+def _trusted_shift(shift, peak):
+    if peak >= SHIFT_PEAK_MIN or not (shift[0] or shift[1]):
+        return shift, None
+    return (0, 0), f"peak {round(peak, 3)} < {SHIFT_PEAK_MIN}"
+
+
 def _measure(frame, candidate, merge=True):
     dy, dx, peak = find_shift(frame, candidate)
-    merged = restore_alpha(frame, candidate, (dy, dx)) if merge else candidate.convert("RGBA")
+    applied, discarded = _trusted_shift((dy, dx), peak)
+    merged = restore_alpha(frame, candidate, applied) if merge else candidate.convert("RGBA")
     metrics = {
         "shift": [dy, dx],
         "peak": round(peak, 3),
         "fidelity_db": round(fidelity(frame, candidate), 2),
-        "rim_lift": round(rim_lift(frame, candidate, (dy, dx)), 1),
+        "rim_lift": round(rim_lift(frame, candidate, applied), 1),
     }
+    if discarded:
+        metrics["shift_discarded"] = discarded
     return merged, metrics
 
 

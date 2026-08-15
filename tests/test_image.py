@@ -796,6 +796,31 @@ def test_preset_fidelity_floor_sits_midway_between_the_repaints_and_the_faithful
     assert "fidelity_db_min" in core.PRESETS["asset"]
 
 
+def test_preset_shift_peak_floor_sits_between_the_spurious_offsets_and_the_trusted_registrations():
+    evidence = core.SHIFT_PEAK_EVIDENCE
+    assert evidence["gemini_connector_spurious"] < evidence["highest_measured_shift"]
+    assert evidence["highest_measured_shift"] < core.SHIFT_PEAK_MIN < evidence["lowest_shipped_zero_shift"]
+    assert core.SHIFT_PEAK_MIN - evidence["highest_measured_shift"] == pytest.approx(0.17)
+    assert evidence["lowest_shipped_zero_shift"] - core.SHIFT_PEAK_MIN == pytest.approx(0.175)
+    assert evidence["lowest_shipped_zero_shift"] < evidence["run_median"] < evidence["run_max"]
+
+
+def test_preset_keeps_the_shift_peak_floor_out_of_the_hashed_settings():
+    assert "shift_peak_min" not in core.preset("asset")
+    assert set(core.PRESETS["asset"]) == {
+        "provider",
+        "model",
+        "gemini_model",
+        "image_size",
+        "master_scale",
+        "declared_ratio",
+        "rim_lift_max",
+        "rim_lift_min",
+        "fidelity_db_min",
+        "outputs",
+    }
+
+
 def test_preset_rejects_an_unknown_name():
     with pytest.raises(ImagingError) as excinfo:
         core.preset("hero")
@@ -1005,6 +1030,50 @@ def test_gate_records_the_shift_without_judging_it(monkeypatch, tmp_path, delive
     assert "fallback" not in record
 
 
+def _shift_probe(seen, value=1.8):
+    def measured(reference, candidate, shift=(0, 0), **kwargs):
+        seen.append(tuple(shift))
+        return value
+
+    return measured
+
+
+def test_gate_discards_a_shift_the_correlation_peak_cannot_support(monkeypatch, tmp_path, delivery, installed):
+    seen = []
+    monkeypatch.setattr(core, "find_shift", lambda *args, **kwargs: (-8, 6, 0.029))
+    monkeypatch.setattr(core, "rim_lift", _shift_probe(seen))
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 37.53)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
+    assert record["engine"] == "gemini"
+    assert record["shift"] == [-8, 6]
+    assert record["peak"] == 0.029
+    assert record["shift_discarded"] == "peak 0.029 < 0.25"
+    assert seen == [(0, 0)]
+    report = json.loads((tmp_path / "out" / "report.json").read_text(encoding="utf-8"))
+    assert report[0]["shift"] == [-8, 6]
+    assert report[0]["shift_discarded"] == "peak 0.029 < 0.25"
+
+
+def test_gate_keeps_following_a_shift_the_peak_supports(monkeypatch, tmp_path, delivery, installed):
+    seen = []
+    monkeypatch.setattr(core, "find_shift", lambda *args, **kwargs: (-8, 6, 0.425))
+    monkeypatch.setattr(core, "rim_lift", _shift_probe(seen))
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 37.53)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
+    assert record["shift"] == [-8, 6]
+    assert "shift_discarded" not in record
+    assert seen == [(-8, 6)]
+
+
+def test_gate_leaves_a_zero_shift_unremarked_however_low_the_peak(monkeypatch, tmp_path, delivery, installed):
+    monkeypatch.setattr(core, "find_shift", lambda *args, **kwargs: (0, 0, 0.010))
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: 1.8)
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 37.53)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
+    assert record["shift"] == [0, 0]
+    assert "shift_discarded" not in record
+
+
 def test_report_row_separates_the_rejected_candidate_from_the_shipped_file(monkeypatch, tmp_path, delivery, installed):
     monkeypatch.setattr(core, "rim_lift", _series([5.9, 5.8]))
     monkeypatch.setattr(core, "fidelity", _series([6.19, 44.31]))
@@ -1046,6 +1115,32 @@ def _alpha_of(path):
     numpy = imaging.load_numpy()
     with Image.open(path) as handle:
         return numpy.asarray(handle.convert("RGBA").split()[-1])
+
+
+def test_core_leaves_the_alpha_where_the_source_put_it_when_the_shift_is_untrustworthy(
+    monkeypatch, tmp_path, delivery, installed
+):
+    numpy = imaging.load_numpy()
+    monkeypatch.setattr(core, "find_shift", lambda *args, **kwargs: (-8, 6, 0.029))
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: 1.8)
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 37.53)
+    record = _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))[0]
+    source = _alpha_of(delivery / "theme" / "node_primary_64x64.png")
+    shipped = _alpha_of(tmp_path / "out" / "master" / "theme" / "node_primary_64x64.png")
+    assert record["engine"] == "gemini"
+    assert numpy.array_equal(shipped, source)
+    assert not numpy.array_equal(shipped, numpy.roll(numpy.roll(source, 8, 0), -6, 1))
+
+
+def test_core_rolls_the_alpha_onto_a_candidate_the_peak_vouches_for(monkeypatch, tmp_path, delivery, installed):
+    numpy = imaging.load_numpy()
+    monkeypatch.setattr(core, "find_shift", lambda *args, **kwargs: (-8, 6, 0.425))
+    monkeypatch.setattr(core, "rim_lift", lambda *args, **kwargs: 1.8)
+    monkeypatch.setattr(core, "fidelity", lambda *args, **kwargs: 37.53)
+    _process(delivery, tmp_path / "out", settings=core.preset(provider="gemini"))
+    source = _alpha_of(delivery / "theme" / "node_primary_64x64.png")
+    shipped = _alpha_of(tmp_path / "out" / "master" / "theme" / "node_primary_64x64.png")
+    assert numpy.array_equal(shipped, numpy.roll(numpy.roll(source, 8, 0), -6, 1))
 
 
 def test_core_feeds_the_local_engine_the_source_file_when_it_fits(tmp_path, delivery, installed):
