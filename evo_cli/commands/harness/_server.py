@@ -133,13 +133,15 @@ class Handler(BaseHTTPRequestHandler):
     def _api(self, route: str, query: dict):
         manifest = self.manifest_path
         if route == "/api/state":
+            info = cluster(manifest)
+            seams = load_seams(manifest)
             self._json(
                 {
                     "digest": digest(manifest),
                     "generatedAt": time.time(),
-                    "cluster": cluster(manifest),
-                    "seams": load_seams(manifest),
-                    "seamGraph": seam_graph(manifest),
+                    "cluster": info,
+                    "seams": seams,
+                    "seamGraph": seam_graph(manifest, info, seams),
                     "deployments": load_deployments(manifest),
                     "plans": [p.summary() for p in load_plans(manifest)],
                 }

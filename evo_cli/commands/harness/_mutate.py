@@ -8,6 +8,7 @@ import rich_click as click
 import yaml
 
 from evo_cli.commands.harness._model import Plan, load_plan_file
+from evo_cli.commands.harness._paths import yaml_load
 
 PLAIN_SAFE = re.compile(r"^[A-Za-z][\w./#@-]*$")
 
@@ -47,6 +48,9 @@ def _line_end(text: str, position: int) -> int:
 
 
 def _apply(text: str, section: str, index: int, updates: dict) -> str:
+    # Stays on the pure-python loader on purpose. libyaml drops a leading BOM before it
+    # starts counting, so its node marks come back one lower than the offsets into `text`
+    # that the splices below rely on.
     for key, value in updates.items():
         root = yaml.compose(text)
         item_node = _item_node(root, section, index)
@@ -74,7 +78,7 @@ def update_item(path: Path, section: str, index: int, updates: dict) -> dict:
     key order, and block scalars intact. The verify step is what makes that safe.
     """
     original = path.read_text(encoding="utf-8")
-    before = yaml.safe_load(original) or {}
+    before = yaml_load(original) or {}
 
     expected = copy.deepcopy(before)
     target = expected[section][index]
@@ -87,7 +91,7 @@ def update_item(path: Path, section: str, index: int, updates: dict) -> dict:
     target.update(updates)
 
     updated = _apply(original, section, index, updates)
-    after = yaml.safe_load(updated) or {}
+    after = yaml_load(updated) or {}
     if after != expected:
         raise click.ClickException(
             f"Refusing to write {path.name}: the rewrite does not match the expected result. File left untouched."
