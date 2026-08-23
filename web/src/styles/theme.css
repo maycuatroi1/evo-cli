@@ -12,13 +12,13 @@
   --ok: #22c55e;
   --active: #38bdf8;
   --warn: #f59e0b;
-  --bad: #ef4444;
+  --bad: #f87171;
   --idle: #64748b;
 
   --ok-soft: #22c55e26;
   --active-soft: #38bdf826;
   --warn-soft: #f59e0b26;
-  --bad-soft: #ef444426;
+  --bad-soft: #f8717126;
   --idle-soft: #64748b26;
 
   --edge: #90a4ae;
@@ -36,6 +36,28 @@
   --mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
 
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+
+  --t-xs: 11px;
+  --t-sm: 12px;
+  --t-base: 13px;
+  --t-md: 14px;
+  --t-lg: 15px;
+  --t-xl: 18px;
+  --t-2xl: 24px;
+
+  --measure: 68ch;
+
+  --dur-fast: 140ms;
+  --dur: 200ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
   --sidebar: 244px;
   --detail: 400px;
   --topbar: 52px;
@@ -52,9 +74,9 @@
   --border-strong: #b7c3d3;
   --fg: #0f172a;
   --fg-muted: #4a5a6e;
-  --fg-dim: #64748b;
+  --fg-dim: #5b6b80;
 
-  --ok: #15803d;
+  --ok: #147235;
   --active: #0369a1;
   --warn: #b45309;
   --bad: #b91c1c;

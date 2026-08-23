@@ -1,34 +1,79 @@
-import { ArrowLeft, CheckCircle2, Copy, GitCommitHorizontal, LoaderCircle, RefreshCw } from 'lucide-react'
-import { useState } from 'react'
-import { completePlan, fetchGit, fetchPlan, useAsync } from '../api'
+import { ArrowLeft, CheckCircle2, GitCommitHorizontal, LoaderCircle, RefreshCw } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { completePlan, fetchGit, fetchPlan, useAsync, type Async } from '../api'
+import { CopyButton, FieldList, ITEM_HIDDEN } from '../components/FieldValue'
+import { EmptyState } from '../components/EmptyState'
 import { GraphPanel } from '../components/GraphPanel'
+import { NextUp } from '../components/NextUp'
+import { Counter, ProgressStrip } from '../components/ProgressStrip'
+import { StepList } from '../components/StepList'
+import { TabPanel, Tabs, type TabDef } from '../components/Tabs'
 import { LevelIcon, ToneIcon } from '../components/ToneIcon'
+import { frontier } from '../frontier'
 import type { GitOverlay, SectionItem } from '../types'
+
+const NOTE_SECTIONS = ['decisions', 'tech_debt', 'open_questions', 'references'] as const
 
 const SECTION_TITLES: Record<string, string> = {
   references: 'References',
-  repos: 'Repos and merge order',
+  repos: 'Repos',
   steps: 'Steps',
   decisions: 'Decisions',
   tech_debt: 'Tech debt',
   open_questions: 'Open questions',
 }
 
-const HIDE_KEYS = new Set(['status', 'what', 'repo', 'id', 'order'])
+const COMMANDS: Record<string, (plan: string, index: number) => string> = {
+  tech_debt: (plan, index) => `evo harness debt ${plan} ${index} fixed`,
+  open_questions: (plan, index) => `evo harness question ${plan} ${index} answered`,
+  repos: (plan, index) => `evo harness repo ${plan} ${index} merged`,
+}
 
 export function PlanDetailView({ id, digest, go }: { id: string; digest: string | null; go: (to: string) => void }) {
   const { data, error, loading, reload } = useAsync(() => fetchPlan(id), [id, digest])
-  const [section, setSection] = useState<string>('steps')
+  const [refetch, setRefetch] = useState(false)
+  const git = useAsync<GitOverlay>(() => fetchGit(id, refetch), [id, digest, refetch])
+  const [tab, setTab] = useState('steps')
+  const [selected, setSelected] = useState<string | null>(null)
   const [completing, setCompleting] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
 
-  if (error) return <div className="view"><section className="panel"><p className="empty tone-bad">{error}</p></section></div>
-  if (loading || !data) return <div className="view"><section className="panel"><p className="empty">Loading {id}...</p></section></div>
+  const steps = useMemo(() => {
+    if (!data) return null
+    const graph = data.graphs.steps
+    const blocked = new Set(frontier(graph).blocked.map((node) => node.id))
+    const tally = { done: 0, active: 0, ready: 0, blocked: 0 }
+    for (const node of graph.nodes) {
+      if (node.tone === 'ok') tally.done += 1
+      else if (node.tone === 'active') tally.active += 1
+      else if (blocked.has(node.id)) tally.blocked += 1
+      else tally.ready += 1
+    }
+    return tally
+  }, [data])
+
+  if (error) {
+    return (
+      <div className="view">
+        <section className="panel">
+          <p className="empty tone-bad">{error}</p>
+        </section>
+      </div>
+    )
+  }
+  if (loading || !data || !steps) {
+    return (
+      <div className="view">
+        <section className="panel">
+          <p className="empty">Loading {id}...</p>
+        </section>
+      </div>
+    )
+  }
 
   const { plan, graphs } = data
   const p = plan.progress
-  const available = Object.entries(plan.sections).filter(([, items]) => items.length > 0)
 
   const moveToDone = async () => {
     setCompleting(true)
@@ -45,15 +90,39 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
     }
   }
 
+  const notes = NOTE_SECTIONS.map((name) => [name, plan.sections[name] ?? []] as const).filter(([, list]) => list.length > 0)
+  const noteTotal = notes.reduce((sum, [, list]) => sum + list.length, 0)
+
+  const tabs: TabDef[] = [
+    { id: 'steps', label: 'Steps', count: p.steps_total },
+    { id: 'repos', label: 'Repos', count: (plan.sections.repos ?? []).length },
+    { id: 'graph', label: 'Graph' },
+    {
+      id: 'git',
+      label: 'Git',
+      count: git.data ? git.data.errors + git.data.warnings : null,
+      tone: git.data && git.data.errors > 0 ? 'bad' : git.data && git.data.warnings > 0 ? 'warn' : 'idle',
+    },
+    { id: 'notes', label: 'Notes', count: noteTotal },
+  ]
+
+  const jumpToStep = (key: string) => {
+    setTab('steps')
+    setSelected(`step-${key}`)
+  }
+
   return (
-    <div className="view">
-      <header className="plan-head">
-        <button className="link" onClick={() => go('#/plans')}>
+    <div className="view plan-view">
+      <header className="plan-bar">
+        <button className="link plan-back" onClick={() => go('#/plans')}>
           <ArrowLeft size={13} aria-hidden /> All plans
         </button>
         <h1 className="mono">{plan.id}</h1>
         <span className={`chip ${plan.area === 'active' ? 'tone-active' : 'tone-ok'}`}>{plan.area}</span>
-        <span className="plan-path mono">{plan.path}</span>
+        <span className="plan-progress mono" title={`${p.steps_done} of ${p.steps_total} steps done`}>
+          {p.steps_done}/{p.steps_total}
+        </span>
+        <CopyButton text={plan.path} label={`Copy plan path: ${plan.path}`} />
         {plan.area === 'active' ? (
           <button className="tool plan-complete-action" onClick={moveToDone} disabled={completing}>
             {completing ? <LoaderCircle size={15} className="spin" aria-hidden /> : <CheckCircle2 size={15} aria-hidden />}
@@ -73,184 +142,226 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
         </p>
       ) : null}
 
-      <p className="plan-goal">{plan.goal}</p>
-
-      <div className="plan-metrics">
-        <Metric label="steps" done={p.steps_done} total={p.steps_total} tone={p.steps_blocking ? 'bad' : 'ok'} />
-        <Metric label="repos" done={p.repos_done} total={p.repos_total} tone="ok" />
-        <Metric label="debt closed" done={p.debt_total - p.debt_open} total={p.debt_total} tone="warn" />
-        <Metric label="questions answered" done={p.questions_total - p.questions_open} total={p.questions_total} tone="warn" />
+      <div className="plan-hero">
+        <div className="plan-brief">
+          <Goal text={plan.goal} />
+          <div className="plan-summary">
+            <ProgressStrip
+              label={`Step progress for ${plan.id}`}
+              total={p.steps_total}
+              segments={[
+                { tone: 'ok', label: 'done', value: steps.done },
+                { tone: 'active', label: 'in progress', value: steps.active },
+                { tone: 'warn', label: 'ready', value: steps.ready },
+                { tone: 'bad', label: 'blocked', value: steps.blocked },
+              ]}
+            />
+            <div className="plan-counters">
+              <Counter label="repos merged" done={p.repos_done} total={p.repos_total} tone="active" />
+              <Counter label="debt closed" done={p.debt_total - p.debt_open} total={p.debt_total} tone="warn" />
+              <Counter label="questions answered" done={p.questions_total - p.questions_open} total={p.questions_total} tone="warn" />
+            </div>
+          </div>
+        </div>
+        <NextUp graph={graphs.steps} planId={plan.id} onPick={jumpToStep} />
       </div>
-
-      <GraphPanel
-        title="Repo merge order"
-        hint="An edge means the source has to be on its base branch before the target merges. Merging out of this order is the failure this plan exists to prevent."
-        graph={graphs.repos}
-        edgeLegend={['declared', 'inferred']}
-      />
-
-      <GraphPanel
-        title="Step order"
-        hint="Built from depends_on, depends_on_step, blocked_by and blocks. Where a plan declares none of those, the order is inferred from repo merge order and step numbering, and the panel says so."
-        graph={graphs.steps}
-      />
-
-      <GitCheck id={id} digest={digest} />
 
       <section className="panel">
         <header className="panel-head">
-          <div className="panel-title">
-            <h2>Plan contents</h2>
-          </div>
-          <div className="segmented segmented-scroll" role="group" aria-label="Plan section">
-            {available.map(([name, items]) => (
-              <button key={name} data-on={section === name || undefined} onClick={() => setSection(name)} aria-pressed={section === name}>
-                {SECTION_TITLES[name] ?? name}
-                <span className="mono">{items.length}</span>
-              </button>
-            ))}
-          </div>
+          <Tabs tabs={tabs} active={tab} onChange={setTab} label="Plan section" />
+          {tab === 'git' ? (
+            <button
+              className="tool"
+              onClick={() => {
+                setRefetch(true)
+                git.reload()
+              }}
+              disabled={git.loading}
+            >
+              <RefreshCw size={13} className={git.loading ? 'spin' : undefined} aria-hidden />
+              {git.loading ? 'checking' : 'git fetch and recheck'}
+            </button>
+          ) : null}
         </header>
-        <div className="items">
-          {(plan.sections[section] ?? []).map((item) => (
-            <Item key={item.index} item={item} plan={plan.id} section={section} />
-          ))}
-          {(plan.sections[section] ?? []).length === 0 ? <p className="empty">Nothing in this section.</p> : null}
-        </div>
+
+        <TabPanel id="steps" active={tab}>
+          <StepList
+            items={plan.sections.steps ?? []}
+            graph={graphs.steps}
+            planId={plan.id}
+            selected={selected}
+            onSelect={setSelected}
+          />
+        </TabPanel>
+
+        <TabPanel id="repos" active={tab}>
+          <SectionList items={plan.sections.repos ?? []} plan={plan.id} section="repos" />
+        </TabPanel>
+
+        <TabPanel id="graph" active={tab}>
+          <div className="graph-tab">
+            <GraphPanel
+              title="Repo merge order"
+              hint="An edge means the source has to be on its base branch before the target merges."
+              graph={graphs.repos}
+              edgeLegend={['declared', 'inferred']}
+            />
+            <GraphPanel
+              title="Step order"
+              hint="Built from depends_on, depends_on_step, blocked_by and blocks. Where a plan declares none of those, the order is inferred from repo merge order and step numbering."
+              graph={graphs.steps}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          </div>
+        </TabPanel>
+
+        <TabPanel id="git" active={tab}>
+          <GitCheck git={git} />
+        </TabPanel>
+
+        <TabPanel id="notes" active={tab}>
+          <NoteSections notes={notes} plan={plan.id} />
+        </TabPanel>
       </section>
     </div>
   )
 }
 
-function Metric({ label, done, total, tone }: { label: string; done: number; total: number; tone: string }) {
-  const pct = total ? Math.round((done * 100) / total) : 0
+const GOAL_CLAMP = 260
+
+function Goal({ text }: { text: string }) {
+  const [full, setFull] = useState(false)
+  const long = text.length > GOAL_CLAMP
   return (
-    <article className="metric">
-      <span className="metric-value mono">
-        {done}
-        <span className="cell-dim">/{total}</span>
-      </span>
-      <span className="metric-label">{label}</span>
-      <span className="meter">
-        <span className={`meter-fill tone-bg-${total && pct === 100 ? 'ok' : tone}`} style={{ width: `${pct}%` }} />
-      </span>
-    </article>
+    <div className="plan-goal-wrap">
+      <p className="plan-goal" data-clamped={long && !full ? true : undefined}>
+        {text}
+      </p>
+      {long ? (
+        <button className="link plan-goal-more" onClick={() => setFull(!full)} aria-expanded={full}>
+          {full ? 'less' : 'more'}
+        </button>
+      ) : null}
+    </div>
   )
 }
 
-function Item({ item, plan, section }: { item: SectionItem; plan: string; section: string }) {
-  const [copied, setCopied] = useState(false)
-  const key = item.raw.id ?? item.raw.order ?? item.index
-  const command =
-    section === 'steps'
-      ? `evo harness step ${plan} ${key} done`
-      : section === 'tech_debt'
-        ? `evo harness debt ${plan} ${item.index} fixed`
-        : section === 'open_questions'
-          ? `evo harness question ${plan} ${item.index} answered`
-          : section === 'repos'
-            ? `evo harness repo ${plan} ${item.index} merged`
-            : null
+function SectionList({ items, plan, section }: { items: SectionItem[]; plan: string; section: string }) {
+  const [open, setOpen] = useState<Set<number>>(new Set())
 
-  const copy = async () => {
-    if (!command) return
-    await navigator.clipboard.writeText(command)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1800)
+  if (items.length === 0) {
+    return <EmptyState title="Nothing in this section." hint={`This plan declares no ${SECTION_TITLES[section] ?? section}.`} />
   }
 
-  const fields = Object.entries(item.raw).filter(
-    ([name, value]) => !HIDE_KEYS.has(name) && value !== null && value !== '' && value !== undefined,
-  )
+  const toggle = (index: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev)
+      if (next.has(index)) next.delete(index)
+      else next.add(index)
+      return next
+    })
 
   return (
-    <article className="item" data-tone={item.tone}>
-      <header>
-        <span className={`tone-${item.tone}`}>
-          <ToneIcon tone={item.tone} />
-        </span>
-        <span className="item-key mono">{String(key)}</span>
-        <span className="item-title">{item.title}</span>
-        {item.status ? <span className={`chip tone-${item.tone}`}>{item.status}</span> : null}
-        {item.raw.blocking ? <span className="chip tone-bad">blocking</span> : null}
-        {command ? (
-          <button className="icon-btn" onClick={copy} title={command} aria-label={`Copy: ${command}`}>
-            {copied ? <span className="tone-ok mono">copied</span> : <Copy size={13} aria-hidden />}
-          </button>
-        ) : null}
-      </header>
-      <dl className="item-fields">
-        {fields.map(([name, value]) => (
-          <div key={name}>
-            <dt>{name.replace(/_/g, ' ')}</dt>
-            <dd className={name === 'verify' || name === 'where' ? 'mono' : undefined}>
-              {Array.isArray(value) ? value.join(', ') : String(value)}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </article>
+    <div className="srows">
+      {items.map((item) => {
+        const key = String(item.raw.id ?? item.raw.order ?? item.index)
+        const command = COMMANDS[section]?.(plan, item.index) ?? null
+        const shown = open.has(item.index)
+        return (
+          <article key={item.index} className="srow" data-tone={item.tone} data-open={shown || undefined}>
+            <div className="srow-bar">
+              <button className="srow-head" aria-expanded={shown} onClick={() => toggle(item.index)}>
+                <span className={`srow-icon tone-${item.tone}`}>
+                  <ToneIcon tone={item.tone} />
+                </span>
+                <span className="item-key mono">{key}</span>
+                <span className="srow-title">{item.title}</span>
+                {item.status ? <span className={`chip tone-${item.tone}`}>{item.status}</span> : null}
+                <span className="srow-caret-slot" aria-hidden />
+              </button>
+              {command ? <CopyButton text={command} label={`Copy: ${command}`} /> : null}
+            </div>
+            {shown ? (
+              <div className="srow-body">
+                <FieldList raw={item.raw} hidden={ITEM_HIDDEN} />
+              </div>
+            ) : null}
+          </article>
+        )
+      })}
+    </div>
   )
 }
 
-function GitCheck({ id, digest }: { id: string; digest: string | null }) {
-  const [refetch, setRefetch] = useState(false)
-  const { data, error, loading, reload } = useAsync<GitOverlay>(() => fetchGit(id, refetch), [id, digest, refetch])
+function NoteSections({ notes, plan }: { notes: (readonly [string, SectionItem[]])[]; plan: string }) {
+  const [which, setWhich] = useState(notes[0]?.[0] ?? 'decisions')
+
+  if (notes.length === 0) {
+    return <EmptyState title="No notes on this plan." hint="Decisions, tech debt, open questions and references all live here." />
+  }
+
+  const active = notes.find(([name]) => name === which) ?? notes[0]
 
   return (
-    <section className="panel">
-      <header className="panel-head">
-        <div className="panel-title">
-          <h2>Plan versus git</h2>
-          {data ? (
-            <span className="panel-meta mono">
-              {data.errors} wrong / {data.warnings} warnings / {data.unknown} uncheckable
-            </span>
-          ) : null}
-        </div>
-        <button
-          className="tool"
-          onClick={() => {
-            setRefetch(true)
-            reload()
-          }}
-          disabled={loading}
-        >
-          <RefreshCw size={13} className={loading ? 'spin' : undefined} aria-hidden />
-          {loading ? 'checking' : 'git fetch and recheck'}
-        </button>
-      </header>
-
-      {error ? <p className="empty tone-bad">{error}</p> : null}
-      {!data ? (
-        <p className="empty">Reading git...</p>
-      ) : (
-        <div className="verdicts">
-          {data.repos.map((repo) => (
-            <article key={repo.repo} className="verdict">
-              <header>
-                <span className="mono">{repo.repo}</span>
-                <span className="chip">{repo.branch || 'no branch'}</span>
-                <span className={`chip tone-${repo.tone}`}>{repo.status || '-'}</span>
-                {repo.dirty ? <span className="chip tone-warn">dirty worktree</span> : null}
-                {repo.head ? (
-                  <span className="cell-dim mono verdict-head">
-                    <GitCommitHorizontal size={12} aria-hidden /> {repo.head}
-                  </span>
-                ) : null}
-              </header>
-              <ul>
-                {repo.verdicts.map((verdict, index) => (
-                  <li key={index} className={`tone-${verdict.level === 'error' ? 'bad' : verdict.level === 'warn' ? 'warn' : verdict.level === 'ok' ? 'ok' : 'idle'}`}>
-                    <LevelIcon level={verdict.level} />
-                    <span>{verdict.text}</span>
-                  </li>
-                ))}
-              </ul>
-            </article>
+    <div className="notes">
+      <div className="steps-bar">
+        <div className="segmented segmented-scroll" role="group" aria-label="Which notes to show">
+          {notes.map(([name, list]) => (
+            <button key={name} data-on={name === active[0] || undefined} aria-pressed={name === active[0]} onClick={() => setWhich(name)}>
+              {SECTION_TITLES[name] ?? name}
+              <span className="mono">{list.length}</span>
+            </button>
           ))}
         </div>
-      )}
-    </section>
+      </div>
+      <SectionList items={active[1]} plan={plan} section={active[0]} />
+    </div>
+  )
+}
+
+function GitCheck({ git }: { git: Async<GitOverlay> }) {
+  const { data, error, loading } = git
+
+  if (error) return <p className="empty tone-bad">{error}</p>
+  if (!data) return <p className="empty">{loading ? 'Reading git...' : 'No git state yet.'}</p>
+
+  return (
+    <>
+      <p className="panel-hint">
+        {data.errors} wrong / {data.warnings} warnings / {data.unknown} uncheckable. A wrong line means the plan claims
+        something git does not agree with.
+      </p>
+      <div className="verdicts">
+        {data.repos.map((repo) => (
+          <article key={repo.repo} className="verdict">
+            <header>
+              <span className="mono">{repo.repo}</span>
+              <span className="chip">{repo.branch || 'no branch'}</span>
+              <span className={`chip tone-${repo.tone}`}>{repo.status || '-'}</span>
+              {repo.dirty ? <span className="chip tone-warn">dirty worktree</span> : null}
+              {repo.head ? (
+                <span className="cell-dim mono verdict-head">
+                  <GitCommitHorizontal size={12} aria-hidden /> {repo.head}
+                </span>
+              ) : null}
+            </header>
+            <ul>
+              {repo.verdicts.map((verdict, index) => (
+                <li
+                  key={index}
+                  className={`tone-${
+                    verdict.level === 'error' ? 'bad' : verdict.level === 'warn' ? 'warn' : verdict.level === 'ok' ? 'ok' : 'idle'
+                  }`}
+                >
+                  <LevelIcon level={verdict.level} />
+                  <span>{verdict.text}</span>
+                </li>
+              ))}
+            </ul>
+          </article>
+        ))}
+      </div>
+    </>
   )
 }

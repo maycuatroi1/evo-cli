@@ -1,4 +1,5 @@
 import { AlertTriangle } from 'lucide-react'
+import { EmptyState } from '../components/EmptyState'
 import type { Deployment, State } from '../types'
 
 function statusTone(status: string): string {
@@ -43,10 +44,10 @@ export function DeploymentsView({ state }: { state: State; selected: string | nu
     return (
       <div className="view">
         <section className="panel">
-          <p className="empty">
-            This harness has no deployments.yaml, so nothing maps which service runs where. An arriving agent
-            has to hardcode or guess every host and environment. Dimension 12 (Deployment topology) scores 0.
-          </p>
+          <EmptyState
+            title="No deployment topology."
+            hint="This harness has no deployments.yaml, so nothing maps which service runs where. An arriving agent has to hardcode or guess every host and environment. Dimension 12 scores 0."
+          />
         </section>
       </div>
     )

@@ -20,6 +20,8 @@ export function GraphPanel({
   graph,
   edgeLegend = ['declared', 'inferred'],
   defaultView = 'graph',
+  selected: controlled,
+  onSelect: onControlledSelect,
 }: {
   title: string
   hint?: string
@@ -27,12 +29,20 @@ export function GraphPanel({
   /** What a solid and a dashed edge mean here: seams say blocking/advisory, plans say declared/inferred. */
   edgeLegend?: [string, string]
   defaultView?: 'graph' | 'table'
+  selected?: string | null
+  onSelect?: (id: string | null) => void
 }) {
   const [view, setView] = useState<'graph' | 'table'>(defaultView)
   const [direction, setDirection] = useState<'LR' | 'TB'>('LR')
-  const [selected, setSelected] = useState<string | null>(null)
+  const [own, setOwn] = useState<string | null>(null)
 
-  useEffect(() => setSelected(null), [graph])
+  const lifted = onControlledSelect !== undefined
+  const selected = lifted ? controlled ?? null : own
+  const setSelected = lifted ? onControlledSelect : setOwn
+
+  useEffect(() => {
+    if (!lifted) setOwn(null)
+  }, [graph, lifted])
 
   const node = useMemo(() => graph.nodes.find((n) => n.id === selected) ?? null, [graph.nodes, selected])
   const problems = graph.warnings.filter((w) => w.level !== 'ok')

@@ -24,7 +24,7 @@ export const completePlan = (id: string) => post<PlanPayload>(`api/plans/${encod
 export const fetchGit = (id: string, refetch = false) =>
   get<GitOverlay>(`api/plans/${encodeURIComponent(id)}/git${refetch ? '?fetch=1' : ''}`)
 
-interface Async<T> {
+export interface Async<T> {
   data: T | null
   error: string | null
   loading: boolean

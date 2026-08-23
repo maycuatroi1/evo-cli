@@ -1,5 +1,7 @@
 import { Boxes, GitFork, Moon, Radio, RefreshCw, Server, Sun, Waypoints } from 'lucide-react'
 import { fetchState, useAsync, useDigest } from './api'
+import { BrandMark } from './components/BrandMark'
+import { CopyButton } from './components/FieldValue'
 import { useRoute, useTheme } from './route'
 import { ClusterView } from './views/Cluster'
 import { ContractsView } from './views/Contracts'
@@ -24,7 +26,7 @@ export function App() {
     <div className="shell">
       <nav className="sidebar" aria-label="Sections">
         <div className="brand">
-          <span className="brand-mark" aria-hidden />
+          <BrandMark />
           <span className="brand-text">
             <strong>{state?.cluster.name ?? 'harness'}</strong>
             <span className="mono">{state ? `${state.cluster.repos.length} repos` : 'loading'}</span>
@@ -54,9 +56,19 @@ export function App() {
                 .map((plan) => (
                   <li key={plan.id}>
                     <a href={`#/plans/${plan.id}`} aria-current={route.id === plan.id ? 'page' : undefined} title={plan.goal}>
-                      <span className="mono nav-plan">{plan.id}</span>
-                      <span className={`nav-count mono ${plan.progress.steps_blocking ? 'tone-bad' : ''}`}>
-                        {plan.progress.pct}%
+                      <span className="nav-plan-row">
+                        <span className="mono nav-plan">{plan.id}</span>
+                        <span className={`nav-count mono ${plan.progress.steps_blocking ? 'tone-bad' : ''}`}>
+                          {plan.progress.pct}%
+                        </span>
+                      </span>
+                      <span className="meter" aria-hidden>
+                        <span
+                          className={`meter-fill tone-bg-${
+                            plan.progress.steps_blocking ? 'bad' : plan.progress.pct === 100 ? 'ok' : 'active'
+                          }`}
+                          style={{ width: `${plan.progress.pct}%` }}
+                        />
                       </span>
                     </a>
                   </li>
@@ -77,6 +89,7 @@ export function App() {
         <header className="topbar">
           <span className="topbar-path mono">{state?.cluster.root ?? ''}</span>
           <div className="topbar-tools">
+            {state ? <CopyButton text={state.cluster.root} label={`Copy harness root: ${state.cluster.root}`} /> : null}
             <button className="icon-btn" onClick={reload} aria-label="Reload now" title="Reload now">
               <RefreshCw size={14} className={loading ? 'spin' : undefined} aria-hidden />
             </button>
