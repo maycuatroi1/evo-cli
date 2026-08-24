@@ -2,7 +2,7 @@ import { forwardRef } from 'react'
 import type { ButtonHTMLAttributes } from 'react'
 import { cn } from './cn'
 
-export type ButtonIntent = 'solid' | 'quiet' | 'danger'
+export type ButtonIntent = 'solid' | 'quiet' | 'ok' | 'danger'
 export type ButtonSize = 'sm' | 'md'
 
 const BASE =
@@ -11,6 +11,7 @@ const BASE =
 const INTENT: Record<ButtonIntent, string> = {
   solid: 'border-active bg-active text-bg hover:bg-active/85',
   quiet: 'border-border bg-surface-2 text-fg-muted hover:border-border-strong hover:bg-surface-3 hover:text-fg',
+  ok: 'border-ok/45 bg-ok-soft text-ok hover:border-ok hover:bg-ok/20 hover:text-fg',
   danger: 'border-bad/40 bg-bad-soft text-bad hover:border-bad hover:bg-bad hover:text-bg',
 }
 
