@@ -11,9 +11,15 @@ import { TabPanel, Tabs, type TabDef } from '../components/Tabs'
 import { LevelIcon, ToneIcon } from '../components/ToneIcon'
 import { frontier } from '../frontier'
 import type { GitOverlay, SectionItem } from '../types'
-import { Button, Chip, CopyButton, Separator } from '../ui'
+import { Button, Card, Chip, CopyButton, Separator, cn } from '../ui'
 
 const BAR_EDGE = 'mx-auto w-full max-w-[1500px] px-6'
+
+const HERO_GRID =
+  'grid grid-cols-1 min-[1100px]:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)_minmax(0,1.1fr)]'
+const ZONE = 'flex min-w-0 flex-col gap-3 p-4'
+const ZONE_SPLIT = 'border-b border-border min-[1100px]:border-r min-[1100px]:border-b-0'
+const ZONE_HEAD = 'm-0 text-[11px] font-semibold tracking-[0.07em] text-fg-dim uppercase'
 
 function scrollParentOf(node: HTMLElement): HTMLElement | null {
   let parent = node.parentElement
@@ -200,34 +206,41 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
           </p>
         ) : null}
 
-        <div className="plan-hero">
-          <div className="plan-brief">
+        <Card data-plan-hero className={HERO_GRID}>
+          <section className={`${ZONE} ${ZONE_SPLIT}`}>
+            <h2 className={ZONE_HEAD}>Goal</h2>
             <Goal text={plan.goal} />
-            <div className="plan-summary">
-              <ProgressStrip
-                label={`Step progress for ${plan.id}`}
-                total={p.steps_total}
-                segments={[
-                  { tone: 'ok', label: 'done', value: steps.done },
-                  { tone: 'active', label: 'in progress', value: steps.active },
-                  { tone: 'warn', label: 'ready', value: steps.ready },
-                  { tone: 'bad', label: 'blocked', value: steps.blocked },
-                ]}
-              />
-              <div className="plan-counters">
-                <Counter label="repos merged" done={p.repos_done} total={p.repos_total} tone="active" />
-                <Counter label="debt closed" done={p.debt_total - p.debt_open} total={p.debt_total} tone="warn" />
-                <Counter
-                  label="questions answered"
-                  done={p.questions_total - p.questions_open}
-                  total={p.questions_total}
-                  tone="warn"
-                />
-              </div>
-            </div>
+          </section>
+
+          <section className={`${ZONE} ${ZONE_SPLIT}`}>
+            <h2 className={ZONE_HEAD}>Progress</h2>
+            <ProgressStrip
+              label={`Step progress for ${plan.id}`}
+              total={p.steps_total}
+              segments={[
+                { tone: 'ok', label: 'done', value: steps.done },
+                { tone: 'active', label: 'in progress', value: steps.active },
+                { tone: 'warn', label: 'ready', value: steps.ready },
+                { tone: 'bad', label: 'blocked', value: steps.blocked },
+              ]}
+            />
+          </section>
+
+          <section className={ZONE}>
+            <NextUp graph={graphs.steps} planId={plan.id} onPick={jumpToStep} />
+          </section>
+
+          <div className="col-span-full flex flex-wrap items-baseline gap-x-5 gap-y-1 border-t border-border px-4 py-2 text-[11px]">
+            <Counter label="repos merged" done={p.repos_done} total={p.repos_total} tone="active" />
+            <Counter label="debt closed" done={p.debt_total - p.debt_open} total={p.debt_total} tone="warn" />
+            <Counter
+              label="questions answered"
+              done={p.questions_total - p.questions_open}
+              total={p.questions_total}
+              tone="warn"
+            />
           </div>
-          <NextUp graph={graphs.steps} planId={plan.id} onPick={jumpToStep} />
-        </div>
+        </Card>
 
         <section className="panel">
           <header className="panel-head">
@@ -298,12 +311,16 @@ function Goal({ text }: { text: string }) {
   const [full, setFull] = useState(false)
   const long = text.length > GOAL_CLAMP
   return (
-    <div className="plan-goal-wrap">
-      <p className="plan-goal" data-clamped={long && !full ? true : undefined}>
+    <div className="flex min-w-0 flex-col items-start gap-1">
+      <p className={cn('m-0 max-w-[68ch] text-sm leading-[1.7] text-fg-muted', long && !full && 'line-clamp-3')}>
         {text}
       </p>
       {long ? (
-        <button className="link plan-goal-more" onClick={() => setFull(!full)} aria-expanded={full}>
+        <button
+          className="rounded-sm text-xs text-active hover:underline"
+          onClick={() => setFull(!full)}
+          aria-expanded={full}
+        >
           {full ? 'less' : 'more'}
         </button>
       ) : null}
