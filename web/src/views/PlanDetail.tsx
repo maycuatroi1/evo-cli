@@ -7,13 +7,29 @@ import { GraphPanel } from '../components/GraphPanel'
 import { NextUp } from '../components/NextUp'
 import { Counter, ProgressStrip } from '../components/ProgressStrip'
 import { StepList } from '../components/StepList'
-import { TabPanel, Tabs, type TabDef } from '../components/Tabs'
 import { LevelIcon, ToneIcon } from '../components/ToneIcon'
 import { frontier } from '../frontier'
 import type { GitOverlay, SectionItem } from '../types'
-import { Button, Card, Chip, CopyButton, Separator, cn } from '../ui'
+import { Button, Card, Chip, CopyButton, Separator, Tab, TabList, TabPanel, Tabs, cn } from '../ui'
 
 const BAR_EDGE = 'mx-auto w-full max-w-[1500px] px-6'
+
+const VIEW_FILL = 'min-h-[calc(100%_+_1.5rem)]'
+
+interface WorkTab {
+  id: string
+  label: string
+  count?: number | null
+  tone?: 'ok' | 'active' | 'warn' | 'bad' | 'idle'
+}
+
+const COUNT_TONE: Record<string, string> = {
+  ok: 'text-ok',
+  active: 'text-active',
+  warn: 'text-warn',
+  bad: 'text-bad',
+  idle: 'text-fg-dim',
+}
 
 const HERO_GRID =
   'grid grid-cols-1 min-[1100px]:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)_minmax(0,1.1fr)]'
@@ -137,7 +153,7 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
   const notes = NOTE_SECTIONS.map((name) => [name, plan.sections[name] ?? []] as const).filter(([, list]) => list.length > 0)
   const noteTotal = notes.reduce((sum, [, list]) => sum + list.length, 0)
 
-  const tabs: TabDef[] = [
+  const tabs: WorkTab[] = [
     { id: 'steps', label: 'Steps', count: p.steps_total },
     { id: 'repos', label: 'Repos', count: (plan.sections.repos ?? []).length },
     { id: 'graph', label: 'Graph' },
@@ -156,7 +172,7 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
   }
 
   return (
-    <div className="-mx-6 -mt-6 flex flex-col">
+    <div className={`-mx-6 -mt-6 flex ${VIEW_FILL} flex-col`}>
       <header ref={setBar} data-plan-bar className="sticky top-0 z-20 border-b border-border bg-bg">
         <div className={`${BAR_EDGE} flex h-14 items-center gap-3`}>
           <Button size="sm" className="shrink-0" onClick={() => go('#/plans')}>
@@ -194,7 +210,7 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
         </div>
       </header>
 
-      <div className={`${BAR_EDGE} flex flex-col gap-4 pt-4`}>
+      <div className={`${BAR_EDGE} flex grow flex-col gap-4 pt-4`}>
         {actionMessage ? (
           <p className="plan-action-message tone-ok" role="status">
             <CheckCircle2 size={15} aria-hidden /> {actionMessage}
@@ -242,63 +258,81 @@ export function PlanDetailView({ id, digest, go }: { id: string; digest: string 
           </div>
         </Card>
 
-        <section className="panel">
-          <header className="panel-head">
-            <Tabs tabs={tabs} active={tab} onChange={setTab} label="Plan section" />
-            {tab === 'git' ? (
-              <button
-                className="tool"
-                onClick={() => {
-                  setRefetch(true)
-                  git.reload()
-                }}
-                disabled={git.loading}
-              >
-                <RefreshCw size={13} className={git.loading ? 'spin' : undefined} aria-hidden />
-                {git.loading ? 'checking' : 'git fetch and recheck'}
-              </button>
-            ) : null}
-          </header>
+        <section data-panel="work" className="panel flex grow flex-col">
+          <Tabs value={tab} onValueChange={(value) => setTab(String(value))} className="grow">
+            <div className="relative shrink-0">
+              <TabList aria-label="Plan section" className="px-4 py-2">
+                {tabs.map((entry) => (
+                  <Tab key={entry.id} value={entry.id}>
+                    {entry.label}
+                    {entry.count != null ? (
+                      <span
+                        className={cn(
+                          'font-mono text-[11px] tabular-nums',
+                          COUNT_TONE[entry.tone ?? 'idle'] ?? 'text-fg-dim',
+                        )}
+                      >
+                        {entry.count}
+                      </span>
+                    ) : null}
+                  </Tab>
+                ))}
+              </TabList>
+              {tab === 'git' ? (
+                <button
+                  className="tool absolute top-1/2 right-4 -translate-y-1/2"
+                  onClick={() => {
+                    setRefetch(true)
+                    git.reload()
+                  }}
+                  disabled={git.loading}
+                >
+                  <RefreshCw size={13} className={git.loading ? 'animate-spin' : undefined} aria-hidden />
+                  {git.loading ? 'checking' : 'git fetch and recheck'}
+                </button>
+              ) : null}
+            </div>
 
-          <TabPanel id="steps" active={tab}>
-            <StepList
-              items={plan.sections.steps ?? []}
-              graph={graphs.steps}
-              planId={plan.id}
-              selected={selected}
-              onSelect={setSelected}
-            />
-          </TabPanel>
-
-          <TabPanel id="repos" active={tab}>
-            <SectionList items={plan.sections.repos ?? []} plan={plan.id} section="repos" />
-          </TabPanel>
-
-          <TabPanel id="graph" active={tab}>
-            <div className="graph-tab">
-              <GraphPanel
-                title="Repo merge order"
-                hint="An edge means the source has to be on its base branch before the target merges."
-                graph={graphs.repos}
-                edgeLegend={['declared', 'inferred']}
-              />
-              <GraphPanel
-                title="Step order"
-                hint="Built from depends_on, depends_on_step, blocked_by and blocks. Where a plan declares none of those, the order is inferred from repo merge order and step numbering."
+            <TabPanel value="steps">
+              <StepList
+                items={plan.sections.steps ?? []}
                 graph={graphs.steps}
+                planId={plan.id}
                 selected={selected}
                 onSelect={setSelected}
               />
-            </div>
-          </TabPanel>
+            </TabPanel>
 
-          <TabPanel id="git" active={tab}>
-            <GitCheck git={git} />
-          </TabPanel>
+            <TabPanel value="repos">
+              <SectionList items={plan.sections.repos ?? []} plan={plan.id} section="repos" />
+            </TabPanel>
 
-          <TabPanel id="notes" active={tab}>
-            <NoteSections notes={notes} plan={plan.id} />
-          </TabPanel>
+            <TabPanel value="graph">
+              <div className="graph-tab">
+                <GraphPanel
+                  title="Repo merge order"
+                  hint="An edge means the source has to be on its base branch before the target merges."
+                  graph={graphs.repos}
+                  edgeLegend={['declared', 'inferred']}
+                />
+                <GraphPanel
+                  title="Step order"
+                  hint="Built from depends_on, depends_on_step, blocked_by and blocks. Where a plan declares none of those, the order is inferred from repo merge order and step numbering."
+                  graph={graphs.steps}
+                  selected={selected}
+                  onSelect={setSelected}
+                />
+              </div>
+            </TabPanel>
+
+            <TabPanel value="git">
+              <GitCheck git={git} />
+            </TabPanel>
+
+            <TabPanel value="notes">
+              <NoteSections notes={notes} plan={plan.id} />
+            </TabPanel>
+          </Tabs>
         </section>
       </div>
     </div>
