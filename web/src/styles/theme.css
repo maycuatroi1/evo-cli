@@ -151,11 +151,13 @@ kbd,
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-border-strong);
-  border: 3px solid var(--color-bg);
+  background-clip: padding-box;
+  border: 3px solid transparent;
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-fg-dim);
+  background-clip: padding-box;
 }
 
 .tone-ok {

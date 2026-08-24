@@ -15,7 +15,9 @@ export function ScrollArea({ children, className, viewportClassName, horizontal 
   return (
     <BaseScrollArea.Root className={cn('relative min-h-0 overflow-hidden', className)}>
       <BaseScrollArea.Viewport className={cn('h-full w-full overscroll-contain', viewportClassName)}>
-        <BaseScrollArea.Content>{children}</BaseScrollArea.Content>
+        <BaseScrollArea.Content className={horizontal ? undefined : 'w-full min-w-0!'}>
+          {children}
+        </BaseScrollArea.Content>
       </BaseScrollArea.Viewport>
       <BaseScrollArea.Scrollbar
         orientation="vertical"
