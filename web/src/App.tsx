@@ -76,27 +76,43 @@ export function App() {
           <section data-sidebar-plans className="nav-group flex min-h-0 flex-1 flex-col">
             <h2 className="shrink-0">Active plans</h2>
             <ScrollArea className="flex-1">
-              <ul className="nav nav-sub">
-                {activePlans.map((plan) => (
-                  <li key={plan.id}>
-                    <a href={`#/plans/${plan.id}`} aria-current={route.id === plan.id ? 'page' : undefined} title={plan.goal}>
-                      <span className="nav-plan-row">
-                        <span className="mono nav-plan">{plan.id}</span>
-                        <span className={`nav-count mono ${plan.progress.steps_blocking ? 'tone-bad' : ''}`}>
-                          {plan.progress.pct}%
-                        </span>
-                      </span>
-                      <span className="meter" aria-hidden>
+              <ul className="flex flex-col gap-px">
+                {activePlans.map((plan) => {
+                  const blocking = plan.progress.steps_blocking > 0
+                  const pct = plan.progress.pct
+                  return (
+                    <li key={plan.id}>
+                      <a
+                        href={`#/plans/${plan.id}`}
+                        aria-current={route.id === plan.id ? 'page' : undefined}
+                        title={plan.goal}
+                        data-plan-row
+                        className="relative flex min-h-8 min-w-0 items-center gap-2 overflow-hidden rounded-sm px-2.5 py-1 text-xs text-fg-muted! no-underline transition-colors duration-150 ease-standard hover:bg-surface-2 hover:text-fg! aria-[current=page]:bg-active-soft aria-[current=page]:text-fg! aria-[current=page]:shadow-[inset_2px_0_0_var(--color-active)]"
+                      >
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs">{plan.id}</span>
                         <span
-                          className={`meter-fill tone-bg-${
-                            plan.progress.steps_blocking ? 'bad' : plan.progress.pct === 100 ? 'ok' : 'active'
-                          }`}
-                          style={{ width: `${plan.progress.pct}%` }}
-                        />
-                      </span>
-                    </a>
-                  </li>
-                ))}
+                          className={cn(
+                            'shrink-0 font-mono text-[11px] tabular-nums',
+                            blocking ? 'text-bad' : 'text-fg-dim',
+                          )}
+                        >
+                          {pct}%
+                        </span>
+                        {pct > 0 ? (
+                          <span
+                            aria-hidden
+                            data-plan-meter
+                            className={cn(
+                              'pointer-events-none absolute bottom-0 left-0 h-px transition-[width] duration-300 ease-standard',
+                              blocking ? 'bg-bad' : pct === 100 ? 'bg-ok' : 'bg-active',
+                            )}
+                            style={{ width: `${pct}%` }}
+                          />
+                        ) : null}
+                      </a>
+                    </li>
+                  )
+                })}
               </ul>
             </ScrollArea>
           </section>
