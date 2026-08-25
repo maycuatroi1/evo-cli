@@ -8,7 +8,7 @@ export type IconButtonSize = 'sm' | 'md'
 const HIT_AREA =
   "before:absolute before:top-1/2 before:left-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
 
-const BASE = `relative inline-flex shrink-0 items-center justify-center rounded-md border transition-colors duration-150 ease-standard outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 ${HIT_AREA}`
+const BASE = `relative inline-flex shrink-0 items-center justify-center rounded-md border transition-colors duration-150 ease-standard focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 ${HIT_AREA}`
 
 const INTENT: Record<IconButtonIntent, string> = {
   solid: 'border-active bg-active text-bg hover:bg-active/85',

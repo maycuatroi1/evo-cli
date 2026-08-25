@@ -87,7 +87,7 @@ export function App() {
                         aria-current={route.id === plan.id ? 'page' : undefined}
                         title={plan.goal}
                         data-plan-row
-                        className="relative flex min-h-8 min-w-0 items-center gap-2 overflow-hidden rounded-sm px-2.5 py-1 text-xs text-fg-muted! no-underline transition-colors duration-150 ease-standard hover:bg-surface-2 hover:text-fg! aria-[current=page]:bg-active-soft aria-[current=page]:text-fg! aria-[current=page]:shadow-[inset_2px_0_0_var(--color-active)]"
+                        className="relative flex min-h-8 min-w-0 items-center gap-2 overflow-hidden rounded-sm px-2.5 py-1 text-xs text-fg-muted no-underline transition-colors duration-150 ease-standard hover:bg-surface-2 hover:text-fg aria-[current=page]:bg-active-soft aria-[current=page]:text-fg aria-[current=page]:shadow-[inset_2px_0_0_var(--color-active)]"
                       >
                         <span className="min-w-0 flex-1 truncate font-mono text-xs">{plan.id}</span>
                         <span

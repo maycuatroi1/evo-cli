@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { cn } from './cn'
 
 const TRIGGER_BASE =
-  'flex w-full items-center gap-2 py-2 pr-2 text-left text-sm font-medium transition-colors duration-150 ease-standard outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring'
+  'flex w-full items-center gap-2 py-2 pr-2 text-left text-sm font-medium transition-colors duration-150 ease-standard focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring'
 
 export interface AccordionProps extends Omit<BaseAccordion.Root.Props, 'className'> {
   className?: string

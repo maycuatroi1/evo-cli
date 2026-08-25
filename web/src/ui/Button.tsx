@@ -6,7 +6,7 @@ export type ButtonIntent = 'solid' | 'quiet' | 'ok' | 'danger'
 export type ButtonSize = 'sm' | 'md'
 
 const BASE =
-  'inline-flex shrink-0 items-center justify-center rounded-md border font-medium whitespace-nowrap transition-colors duration-150 ease-standard outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50'
+  'inline-flex shrink-0 items-center justify-center rounded-md border font-medium whitespace-nowrap transition-colors duration-150 ease-standard focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50'
 
 const INTENT: Record<ButtonIntent, string> = {
   solid: 'border-active bg-active text-bg hover:bg-active/85',

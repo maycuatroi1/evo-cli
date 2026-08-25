@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { cn } from './cn'
 
 const ITEM_BASE =
-  'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm px-2 text-xs font-medium whitespace-nowrap transition-colors duration-150 ease-standard outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring'
+  'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm px-2 text-xs font-medium whitespace-nowrap transition-colors duration-150 ease-standard focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring'
 
 export interface SegmentedOption<T extends string> {
   value: T
