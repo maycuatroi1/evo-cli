@@ -141,3 +141,6 @@ web/.vite/
 # macOS
 .DS_Store
 .claude/skills/.learned/.processed/
+
+# Binary archives (curator backups under .claude/skills/.learned/.backups/)
+*.tar.gz
