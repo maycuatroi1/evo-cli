@@ -131,7 +131,12 @@ def test_install_opencode_skips_when_present(monkeypatch):
 
 def test_install_opencode_runs_npm_when_missing(monkeypatch):
     states = iter([None, "/usr/bin/opencode"])  # missing before install, present after
-    monkeypatch.setattr("evo_cli.commands.opencode.shutil.which", lambda _: next(states))
+
+    def which(name):
+        # Only the opencode lookups advance the states; npm/sudo probes resolve normally.
+        return next(states) if name == "opencode" else f"/usr/bin/{name}"
+
+    monkeypatch.setattr("evo_cli.commands.opencode.shutil.which", which)
     monkeypatch.setattr(
         "evo_cli.commands.opencode.subprocess.run",
         lambda *a, **k: type("R", (), {"stdout": "1.2.3\n"})(),

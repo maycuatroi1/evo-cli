@@ -7,7 +7,7 @@ name = "evo_cli"
 dynamic = ["version"]
 description = "Evolution CLI - a developer toolbox for setting up dev machines"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "maycuatroi" }]
 keywords = ["cli", "ssh", "miniconda", "cloudflare", "devtools"]
 classifiers = [
@@ -58,7 +58,7 @@ evo_cli = ["VERSION", "commands/harness/web/*", "commands/harness/web/assets/*"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 extend-select = ["I"]
