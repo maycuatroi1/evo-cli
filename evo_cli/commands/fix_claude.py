@@ -50,7 +50,7 @@ def version_str(version):
 def probe_version():
     """Read the installed Claude Code version without the noisy command echo."""
     try:
-        result = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(["claude", "--version"], capture_output=True, text=True, timeout=30, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     return parse_version(result.stdout) or parse_version(result.stderr)

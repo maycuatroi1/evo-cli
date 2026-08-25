@@ -267,7 +267,7 @@ def _plan_harness(tmp_path):
 
 
 def test_load_plan_file_reparses_once_the_file_changes(tmp_path):
-    manifest, plans = _plan_harness(tmp_path)
+    _manifest, plans = _plan_harness(tmp_path)
     path = plans / "active" / "shift.yaml"
     path.write_text("id: shift\ngoal: first\nsteps: []\n", encoding="utf-8")
 

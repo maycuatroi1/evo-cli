@@ -153,7 +153,7 @@ def ytdlp_version():
     if not cmd:
         return None
     try:
-        result = subprocess.run(cmd + ["--version"], capture_output=True, text=True)
+        result = subprocess.run(cmd + ["--version"], capture_output=True, text=True, check=False)
     except OSError:
         return None
     return (result.stdout or "").strip() or None
@@ -200,7 +200,7 @@ def ffmpeg_version():
     if not exe:
         return None
     try:
-        result = subprocess.run([exe, "-version"], capture_output=True, text=True)
+        result = subprocess.run([exe, "-version"], capture_output=True, text=True, check=False)
     except OSError:
         return None
     first = ((result.stdout or "") + (result.stderr or "")).strip().splitlines()
@@ -227,7 +227,7 @@ def probe_media(path):
         str(path),
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except OSError:
         return None
     if result.returncode != 0:
@@ -263,7 +263,7 @@ def h264_encoder():
     if sys.platform == "darwin":
         exe = find_ffmpeg()
         try:
-            result = subprocess.run([exe, "-v", "error", "-encoders"], capture_output=True, text=True)
+            result = subprocess.run([exe, "-v", "error", "-encoders"], capture_output=True, text=True, check=False)
         except OSError:
             return "libx264"
         if "h264_videotoolbox" in (result.stdout or ""):

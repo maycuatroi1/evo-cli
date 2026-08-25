@@ -163,7 +163,7 @@ def _flush_dns():
         try:
             import subprocess
 
-            subprocess.run(["ipconfig", "/flushdns"], capture_output=True)
+            subprocess.run(["ipconfig", "/flushdns"], capture_output=True, check=False)
         except Exception:
             pass
 
@@ -207,7 +207,10 @@ def _install_ca(ca_crt_path):
 
         info("Installing CA into the Windows user Root store...")
         r = subprocess.run(
-            ["certutil", "-addstore", "-user", "-f", "Root", str(ca_crt_path)], capture_output=True, text=True
+            ["certutil", "-addstore", "-user", "-f", "Root", str(ca_crt_path)],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if r.returncode == 0:
             success("CA trusted (Chrome / Edge will accept .local certs)")
@@ -382,9 +385,8 @@ def _relay_until_eof(reader, out_sock):
 
 def _transfer_body(reader, out_sock, parsed, is_request, method=b"GET", status=None):
     """Relay a message body. Returns True only for a close-delimited response."""
-    if not is_request:
-        if method == b"HEAD" or status in (204, 304) or (status is not None and 100 <= status < 200):
-            return False
+    if not is_request and (method == b"HEAD" or status in (204, 304) or (status is not None and 100 <= status < 200)):
+        return False
     te = (_hget(parsed, b"Transfer-Encoding") or b"").lower()
     if b"chunked" in te:
         _relay_chunked(reader, out_sock)
@@ -589,7 +591,7 @@ class LocalReverseProxy:
         while self.running:
             try:
                 conn, addr = srv.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -613,8 +615,7 @@ def run_localproxy(domains, port, bind, no_hosts, cert_dir, install_ca, insecure
     norm = []
     for d in domains:
         d = re.sub(r"^https?://", "", d.strip().lower()).split("/")[0].split(":")[0]
-        if d.endswith(".local"):
-            d = d[: -len(".local")]
+        d = d.removesuffix(".local")
         if d and d not in norm:
             norm.append(d)
     if not norm:

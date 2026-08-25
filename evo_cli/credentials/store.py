@@ -65,16 +65,16 @@ def compile_flat(include_legacy=False):
 
     target = config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    handle = tempfile.NamedTemporaryFile("w", delete=False, dir=str(target.parent), encoding="utf-8")
+    fd, temp_name = tempfile.mkstemp(dir=str(target.parent))
     try:
-        json.dump(out, handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
-        handle.close()
-        _chmod(handle.name, 0o600)
-        os.replace(handle.name, target)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(out, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        _chmod(temp_name, 0o600)
+        os.replace(temp_name, target)
     except Exception:
-        if os.path.exists(handle.name):
-            os.unlink(handle.name)
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
         raise
 
     return count, skipped, target

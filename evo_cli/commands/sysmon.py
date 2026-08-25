@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import rich_click as click
 from rich.table import Table
@@ -38,7 +39,7 @@ EPILOG = Text.from_markup(
 def _run(cmd, timeout=6):
     """Run a command, return its stdout on success, else None (never raises)."""
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout if out.returncode == 0 else None
@@ -106,8 +107,8 @@ def _linux_temps():
         if not zone.startswith("thermal_zone"):
             continue
         try:
-            raw = open(f"{base}/{zone}/temp").read().strip()
-            label = open(f"{base}/{zone}/type").read().strip()
+            raw = Path(f"{base}/{zone}/temp").read_text().strip()
+            label = Path(f"{base}/{zone}/type").read_text().strip()
             entries.append({"label": label, "value": int(raw) / 1000.0})
         except (OSError, ValueError):
             continue
@@ -268,9 +269,10 @@ def cpu_model():
         return (_run(["sysctl", "-n", "machdep.cpu.brand_string"]) or "").strip() or None
     if system == "Linux":
         try:
-            for line in open("/proc/cpuinfo"):
-                if line.lower().startswith("model name"):
-                    return line.split(":", 1)[1].strip()
+            with open("/proc/cpuinfo") as handle:
+                for line in handle:
+                    if line.lower().startswith("model name"):
+                        return line.split(":", 1)[1].strip()
         except OSError:
             pass
     return None
@@ -444,8 +446,10 @@ def build_notes(data):
         notes.append(
             (
                 "info",
-                "Install 'smctemp' for real CPU/GPU °C readings: "
-                "evo sysmon --install-deps  (or brew install narugit/tap/smctemp)",
+                (
+                    "Install 'smctemp' for real CPU/GPU °C readings: "
+                    "evo sysmon --install-deps  (or brew install narugit/tap/smctemp)"
+                ),
             )
         )
     return notes
@@ -480,7 +484,7 @@ def install_deps():
         error("Homebrew not found. Install it from https://brew.sh first.")
         sys.exit(1)
     info("Installing smctemp via Homebrew (narugit/tap/smctemp)...")
-    result = subprocess.run(["brew", "install", "narugit/tap/smctemp"])
+    result = subprocess.run(["brew", "install", "narugit/tap/smctemp"], check=False)
     if result.returncode == 0 and shutil.which("smctemp"):
         success("smctemp installed - real CPU/GPU temperatures are now available.")
     else:

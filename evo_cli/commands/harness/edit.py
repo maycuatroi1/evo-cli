@@ -73,7 +73,7 @@ def _pick(item, key, status):
     if key is None:
         choices = [
             questionary.Choice(
-                title=f"{step_key(entry, index):>3}  {str(entry.get('status') or '-'):<12} {step_title(entry, width)}",
+                title=f"{step_key(entry, index):>3}  {(entry.get('status') or '-'):<12} {step_title(entry, width)}",
                 value=step_key(entry, index),
             )
             for index, entry in enumerate(entries)

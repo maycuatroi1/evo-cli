@@ -210,7 +210,7 @@ def test_apply_authtoken_does_not_echo_the_secret(capsys, monkeypatch, tmp_path)
 
 
 def test_setup_ngrok_stores_the_token_and_configures_the_agent(runner, store, fake_agent):
-    binary, calls = fake_agent
+    _binary, calls = fake_agent
     result = runner.invoke(cli, ["setup", "ngrok", "--method", "none", "--authtoken", TOKEN])
     assert result.exit_code == 0, result.output
 

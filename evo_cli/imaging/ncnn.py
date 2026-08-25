@@ -158,7 +158,7 @@ def build_command(binary, src, dst, model, size, models_root):
 
 
 def _run(cmd):
-    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
 
 
 def _exit_label(code):

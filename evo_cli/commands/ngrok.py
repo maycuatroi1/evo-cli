@@ -135,6 +135,7 @@ def ngrok_version(binary):
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return "unknown"
@@ -250,6 +251,7 @@ def add_to_user_path(directory):
             encoding="utf-8",
             errors="replace",
             timeout=60,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         warning(f"could not update the user PATH: {exc}")
@@ -458,6 +460,7 @@ def apply_authtoken(binary, token):
             encoding="utf-8",
             errors="replace",
             timeout=60,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         error(f"could not run the agent: {exc}")

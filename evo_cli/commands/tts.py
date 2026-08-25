@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -217,9 +218,9 @@ def speak(
         target = Path(output)
         target.parent.mkdir(parents=True, exist_ok=True)
     else:
-        handle = tempfile.NamedTemporaryFile(suffix=f".{output_format}", delete=False, prefix="evo-tts-")
-        handle.close()
-        target = Path(handle.name)
+        fd, temp_name = tempfile.mkstemp(suffix=f".{output_format}", prefix="evo-tts-")
+        os.close(fd)
+        target = Path(temp_name)
     target.write_bytes(audio)
     if not quiet:
         success(f"Wrote [accent]{target}[/accent] ({len(audio)} bytes)")

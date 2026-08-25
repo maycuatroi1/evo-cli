@@ -130,7 +130,7 @@ def java_version():
     if not java:
         return None
     try:
-        r = subprocess.run([java, "-version"], capture_output=True, text=True)
+        r = subprocess.run([java, "-version"], capture_output=True, text=True, check=False)
         out = (r.stderr or r.stdout or "").strip().splitlines()
         return out[0] if out else None
     except OSError:
@@ -142,7 +142,7 @@ def dot_version():
     if not dot:
         return None
     try:
-        r = subprocess.run([dot, "-V"], capture_output=True, text=True)
+        r = subprocess.run([dot, "-V"], capture_output=True, text=True, check=False)
         return (r.stderr or r.stdout or "").strip() or None
     except OSError:
         return None
@@ -242,11 +242,11 @@ def install_packages(packages, assume_yes):
             ident = pkgmap[pkg][mgr]
             cmd = ["winget", "install", "-e", "--id", ident]
             console.print(f"[cmd]$ {' '.join(cmd)}[/cmd]")
-            ok = subprocess.run(cmd).returncode == 0 and ok
+            ok = subprocess.run(cmd, check=False).returncode == 0 and ok
         return ok
     cmd = cmds[mgr](resolved)
     console.print(f"[cmd]$ {' '.join(cmd)}[/cmd]")
-    return subprocess.run(cmd).returncode == 0
+    return subprocess.run(cmd, check=False).returncode == 0
 
 
 def run_jar(args, capture=True):
@@ -256,7 +256,7 @@ def run_jar(args, capture=True):
     if not jar_path().exists():
         raise click.ClickException("plantuml.jar not found. Run `evo plantuml install` first.")
     cmd = [java, "-jar", str(jar_path())] + list(args)
-    return subprocess.run(cmd, capture_output=capture, text=True)
+    return subprocess.run(cmd, capture_output=capture, text=True, check=False)
 
 
 # install -------------------------------------------------------------------
@@ -471,7 +471,7 @@ def open_file(path):
     path = str(path)
     try:
         if os.name == "nt":
-            os.startfile(path)  # noqa: S606
+            os.startfile(path)
         elif platform.system() == "Darwin":
             subprocess.run(["open", path], check=False)
         else:

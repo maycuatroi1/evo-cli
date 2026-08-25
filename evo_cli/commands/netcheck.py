@@ -167,7 +167,7 @@ def probe(host, timeout):
         res["ttfb_ms"] = _ms(t)
         ssock.close()
         res["total_ms"] = _ms(started)
-    except (socket.gaierror, socket.timeout, OSError, ssl.SSLError) as exc:
+    except (TimeoutError, socket.gaierror, OSError, ssl.SSLError) as exc:
         res["error"] = str(exc)
     return res
 
@@ -240,7 +240,7 @@ def speed_test(timeout):
                 if not chunk:
                     break
                 total += len(chunk)
-    except (urllib.error.URLError, socket.timeout, OSError) as exc:
+    except (TimeoutError, urllib.error.URLError, OSError) as exc:
         return {"error": str(exc)}
     elapsed = time.perf_counter() - started
     mbps = (total * 8) / elapsed / 1e6 if elapsed else 0.0
@@ -305,9 +305,11 @@ def build_notes(rows, ipv6):
         notes.append(
             (
                 "warning",
-                "broken IPv6: DNS returns AAAA records but the host can't reach IPv6 "
-                f"({ipv6['host']} {ipv6['ip']}). This can cause lag on dual-stack sites; "
-                "prefer IPv4 (Windows: set Tcpip6 DisabledComponents = 0x20, then reboot).",
+                (
+                    "broken IPv6: DNS returns AAAA records but the host can't reach IPv6 "
+                    f"({ipv6['host']} {ipv6['ip']}). This can cause lag on dual-stack sites; "
+                    "prefer IPv4 (Windows: set Tcpip6 DisabledComponents = 0x20, then reboot)."
+                ),
             )
         )
     return notes

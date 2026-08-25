@@ -1,3 +1,4 @@
+import contextlib
 import io
 import re
 import wave
@@ -36,17 +37,14 @@ def split_text(text, limit):
 
 def _join_wav(parts):
     buffer = io.BytesIO()
-    writer = None
-    try:
+    with contextlib.ExitStack() as stack:
+        writer = None
         for part in parts:
             with wave.open(io.BytesIO(part), "rb") as reader:
                 if writer is None:
-                    writer = wave.open(buffer, "wb")
+                    writer = stack.enter_context(wave.open(buffer, "wb"))
                     writer.setparams(reader.getparams())
                 writer.writeframes(reader.readframes(reader.getnframes()))
-    finally:
-        if writer is not None:
-            writer.close()
     return buffer.getvalue()
 
 

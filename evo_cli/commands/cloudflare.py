@@ -106,7 +106,9 @@ def build_config_yaml(tunnel_id, hostname, service, credentials_path):
 
 def install_cloudflared():
     if _has("cloudflared"):
-        version = subprocess.run(["cloudflared", "--version"], capture_output=True, text=True).stdout.strip()
+        version = subprocess.run(
+            ["cloudflared", "--version"], capture_output=True, text=True, check=False
+        ).stdout.strip()
         info(f"cloudflared already installed: [accent]{version}[/accent]")
         return True
 
@@ -167,6 +169,7 @@ def list_tunnels():
         ["cloudflared", "tunnel", "list", "--output", "json"],
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0:
         return []
@@ -198,7 +201,7 @@ def read_local_config():
         line = raw.strip()
         if line.startswith("tunnel:"):
             tunnel_id = line.split(":", 1)[1].strip()
-        elif line.startswith("- hostname:") or line.startswith("hostname:"):
+        elif line.startswith(("- hostname:", "hostname:")):
             current_host = line.split(":", 1)[1].strip()
         elif line.startswith("service:"):
             if current_host:
@@ -215,7 +218,7 @@ def cloudflared_service_state():
     if not SERVICE_UNIT.exists():
         return None
     try:
-        result = subprocess.run(["systemctl", "is-active", "cloudflared"], capture_output=True, text=True)
+        result = subprocess.run(["systemctl", "is-active", "cloudflared"], capture_output=True, text=True, check=False)
     except OSError:
         return "unknown"
     return result.stdout.strip() or "unknown"
@@ -226,7 +229,7 @@ def mac_service_state():
     if not MAC_PLIST.exists():
         return None
     try:
-        result = subprocess.run(["launchctl", "list", MAC_LABEL], capture_output=True, text=True)
+        result = subprocess.run(["launchctl", "list", MAC_LABEL], capture_output=True, text=True, check=False)
     except OSError:
         return "unknown"
     if result.returncode != 0:
@@ -464,6 +467,7 @@ def _install_service_linux(config_file):
         sudo_prefix() + ["systemctl", "is-active", "cloudflared"],
         capture_output=True,
         text=True,
+        check=False,
     ).stdout.strip()
     if state == "active":
         success(f"cloudflared service: {state}")

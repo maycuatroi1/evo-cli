@@ -13,8 +13,7 @@ USER_RE = re.compile(r"^[^@/]+@")
 def normalize_remote(url):
     """Reduce a remote URL to host + path so the ssh and https forms of one repo compare equal."""
     text = str(url).strip().rstrip("/")
-    if text.endswith(".git"):
-        text = text[: -len(".git")]
+    text = text.removesuffix(".git")
     text = USER_RE.sub("", SCHEME_RE.sub("", text))
     return text.replace(":", "/", 1).lower()
 

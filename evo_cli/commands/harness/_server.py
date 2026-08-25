@@ -60,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
     manifest_path: Path = Path()
 
-    def log_message(self, *args):  # noqa: A003 - silence the default stderr access log
+    def log_message(self, *args):
         pass
 
     # A browser that closes a tab, reloads, or drops the SSE stream kills the keep-alive socket

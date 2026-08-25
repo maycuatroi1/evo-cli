@@ -105,7 +105,7 @@ def test_sandbox_fails_a_test_that_spawns_the_binary(installed, tmp_path):
     with pytest.raises(pytest.fail.Exception):
         ncnn._run([str(installed)])
     with pytest.raises(pytest.fail.Exception):
-        subprocess.run([sys.executable, "-c", "pass"])
+        subprocess.run([sys.executable, "-c", "pass"], check=False)
 
 
 def test_ncnn_asset_url_pins_the_release():

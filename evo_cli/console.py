@@ -91,6 +91,7 @@ def _sudo_credentials_cached():
         text=True,
         encoding="utf-8",
         errors="replace",
+        check=False,
     )
     return result.returncode == 0
 
@@ -130,6 +131,7 @@ def ensure_sudo():
         text=True,
         encoding="utf-8",
         errors="replace",
+        check=False,
     )
     if result.returncode != 0:
         raise CommandError("sudo authentication failed")
@@ -170,12 +172,12 @@ def run_command(cmd, capture=False, check=True, input_text=None, status=None, ti
     try:
         if status:
             with console.status(f"[info]{status}[/info]", spinner="dots"):
-                result = subprocess.run(exec_cmd, capture_output=True, **run_kwargs)
+                result = subprocess.run(exec_cmd, capture_output=True, check=False, **run_kwargs)
             output = (result.stdout or "").strip()
             if output:
                 console.print(output)
         else:
-            result = subprocess.run(exec_cmd, capture_output=capture, **run_kwargs)
+            result = subprocess.run(exec_cmd, capture_output=capture, check=False, **run_kwargs)
     except subprocess.TimeoutExpired as exc:
         console.print(f"[error]command timed out after {timeout}s: {' '.join(cmd)}[/error]")
         if check:
