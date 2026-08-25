@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
@@ -38,7 +40,7 @@ def test_resolve_download_fallback_on_failure(monkeypatch):
 
 
 def test_templates_are_well_formed():
-    for kind, body in plantuml.TEMPLATES.items():
+    for body in plantuml.TEMPLATES.values():
         assert body.lstrip().startswith("@start")
         assert "@end" in body
 
@@ -73,7 +75,7 @@ def test_build_config_smetana(monkeypatch):
     import os
 
     try:
-        content = open(path, encoding="utf-8").read()
+        content = Path(path).read_text(encoding="utf-8")
         assert "smetana" in content
         assert "!theme cerulean" in content
     finally:

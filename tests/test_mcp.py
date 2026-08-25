@@ -1,3 +1,4 @@
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -77,12 +78,12 @@ def test_resolve_spec_custom_command():
 
 
 def test_resolve_spec_url_and_command_conflict():
-    with pytest.raises(Exception):
+    with pytest.raises(click.BadParameter):
         resolve_spec("x", "https://x.dev/mcp", "http", command="npx -y some-mcp")
 
 
 def test_resolve_spec_unknown_raises():
-    with pytest.raises(Exception):
+    with pytest.raises(click.BadParameter):
         resolve_spec("nope", None, "http")
 
 

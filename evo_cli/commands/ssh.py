@@ -76,8 +76,10 @@ def upload_ssh_key(client, public_key_path):
         public_key = Path(public_key_path).read_text().strip()
         commands = [
             "mkdir -p ~/.ssh",
-            f"grep -qxF '{public_key}' ~/.ssh/authorized_keys 2>/dev/null "
-            f"|| echo '{public_key}' >> ~/.ssh/authorized_keys",
+            (
+                f"grep -qxF '{public_key}' ~/.ssh/authorized_keys 2>/dev/null "
+                f"|| echo '{public_key}' >> ~/.ssh/authorized_keys"
+            ),
             "chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys",
         ]
         for command in commands:

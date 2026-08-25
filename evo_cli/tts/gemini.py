@@ -123,8 +123,8 @@ def _to_mp3(pcm, sample_rate, bitrate):
             "pipe:1",
         ],
         input=pcm,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
+        check=False,
     )
     if result.returncode != 0 or not result.stdout:
         raise TtsError(f"ffmpeg failed to encode mp3: {result.stderr.decode('utf-8', 'replace')[:300]}")

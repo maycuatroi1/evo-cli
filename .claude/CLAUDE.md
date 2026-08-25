@@ -20,7 +20,7 @@ and to load existing ones. Never hardcode secrets in the repo.
 
 ## Stack
 
-- Python 3.9+, packaged with `pyproject.toml` (setuptools backend).
+- Python 3.10+, packaged with `pyproject.toml` (setuptools backend).
 - CLI built on `click` / `rich-click`; terminal output via `rich`.
 - Entry point: `evo` maps to `evo_cli.__main__:main`.
 

@@ -93,6 +93,7 @@ def node_major_version():
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            check=False,
         )
     except Exception:
         return None
@@ -112,6 +113,7 @@ def installed_apt_packages(names):
                 encoding="utf-8",
                 errors="replace",
                 timeout=60,
+                check=False,
             )
         except Exception:
             continue
@@ -289,6 +291,7 @@ def opencode_version():
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            check=False,
         )
         return result.stdout.strip() or "unknown"
     except Exception:
@@ -307,6 +310,7 @@ def npm_global_needs_sudo(npm_cmd="npm"):
             encoding="utf-8",
             errors="replace",
             timeout=60,
+            check=False,
         )
     except Exception:
         return False
@@ -465,6 +469,7 @@ def verify_mcp_servers():
                 encoding="utf-8",
                 errors="replace",
                 timeout=30,
+                check=False,
             )
             if result.returncode == 0 and '"jsonrpc":"2.0"' in result.stdout:
                 success(f"MCP server [accent]{name}[/accent] responded to initialize")

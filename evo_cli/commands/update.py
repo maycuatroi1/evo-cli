@@ -154,7 +154,7 @@ def build_commands(mode, allow_pre):
         if allow_pre:
             cmd.append("--prerelease=allow")
         return [cmd]
-    probe = subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True)
+    probe = subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True, check=False)
     if probe.returncode != 0:
         raise click.ClickException(f"pip is not available for {sys.executable}. Install pip or use pipx/uv.")
     cmd = [sys.executable, "-m", "pip", "install", "--upgrade", target]

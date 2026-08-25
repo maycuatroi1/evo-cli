@@ -1,5 +1,6 @@
 import { ArrowRight, Copy, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
+import { EmptyState } from '../components/EmptyState'
 import { GraphPanel } from '../components/GraphPanel'
 import type { Seam, State } from '../types'
 
@@ -11,10 +12,10 @@ export function ContractsView({ state, selected, go }: { state: State; selected:
     return (
       <div className="view">
         <section className="panel">
-          <p className="empty">
-            This harness has no contracts.yaml, so nothing declares who owns what. Seams are what turn a folder of
-            repos into a cluster you can reason about.
-          </p>
+          <EmptyState
+            title="No contracts declared."
+            hint="This harness has no contracts.yaml, so nothing declares who owns what. Seams are what turn a folder of repos into a cluster you can reason about."
+          />
         </section>
       </div>
     )

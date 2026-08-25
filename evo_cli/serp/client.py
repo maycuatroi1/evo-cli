@@ -124,6 +124,7 @@ def run_binary(binary, argv, key, timeout=90, capture=True):
             errors="replace",
             env=env,
             timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         raise SerpError(f"serpapi CLI timed out after {timeout}s") from exc

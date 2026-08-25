@@ -1,0 +1,48 @@
+.react-flow {
+  --xy-background-color: transparent;
+}
+
+.react-flow__node.is-dimmed,
+.react-flow__edge.is-dimmed {
+  opacity: 0.2;
+  transition: opacity 180ms ease;
+}
+
+.react-flow__node:focus-visible .dagnode {
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px var(--color-ring);
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__controls {
+  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  fill: var(--color-fg-muted);
+  width: 26px;
+  height: 26px;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--color-surface-3);
+  fill: var(--color-fg);
+}
+
+.react-flow__minimap {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}

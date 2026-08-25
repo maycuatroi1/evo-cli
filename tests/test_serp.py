@@ -1,5 +1,6 @@
 import json
 import re
+import sys
 
 import pytest
 from click.testing import CliRunner
@@ -123,7 +124,8 @@ def test_missing_key_explains_how_to_add_one(store):
 def test_write_config_file_is_private(store):
     path = creds.write_config_file("secret-key")
     assert path.read_text(encoding="utf-8") == 'api_key = "secret-key"\n'
-    assert path.stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        assert path.stat().st_mode & 0o777 == 0o600
 
 
 def test_mask_hides_the_middle():

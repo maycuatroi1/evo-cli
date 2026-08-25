@@ -24,7 +24,7 @@ export const completePlan = (id: string) => post<PlanPayload>(`api/plans/${encod
 export const fetchGit = (id: string, refetch = false) =>
   get<GitOverlay>(`api/plans/${encodeURIComponent(id)}/git${refetch ? '?fetch=1' : ''}`)
 
-interface Async<T> {
+export interface Async<T> {
   data: T | null
   error: string | null
   loading: boolean
@@ -60,10 +60,16 @@ export function useAsync<T>(loader: () => Promise<T>, deps: unknown[]): Async<T>
   return { data, error, loading, reload: useCallback(() => setNonce((n) => n + 1), []) }
 }
 
-/** The server pushes a digest of every file it reads. A change means reload, not a diff to apply. */
+/** The server pushes a digest of every file it reads. A change means reload, not a diff to apply.
+ *
+ * The first frame arrives before the server's first sleep, so publishing it would flip every
+ * `[digest]` dependency moments after mount and refetch the whole dashboard a second time.
+ * It is kept as the baseline instead; only later frames count as a change.
+ */
 export function useDigest(): { digest: string | null; live: boolean } {
   const [digest, setDigest] = useState<string | null>(null)
   const [live, setLive] = useState(false)
+  const seen = useRef<string | null>(null)
 
   useEffect(() => {
     const source = new EventSource('api/stream')
@@ -71,7 +77,11 @@ export function useDigest(): { digest: string | null; live: boolean } {
     source.onerror = () => setLive(false)
     source.onmessage = (event) => {
       try {
-        setDigest((JSON.parse(event.data) as { digest: string }).digest)
+        const next = (JSON.parse(event.data) as { digest: string }).digest
+        if (seen.current === next) return
+        const first = seen.current === null
+        seen.current = next
+        if (!first) setDigest(next)
       } catch {
         /* a malformed frame is not worth tearing the stream down for */
       }

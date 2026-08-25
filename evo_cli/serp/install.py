@@ -50,7 +50,13 @@ def binary_version(binary):
     for args in (["--version"], ["version"]):
         try:
             result = subprocess.run(
-                [str(binary), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20
+                [str(binary), *args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+                check=False,
             )
         except (OSError, subprocess.SubprocessError):
             continue
@@ -157,7 +163,7 @@ def _brew(args):
 
     cmd = ["brew", *args]
     console.print(f"[cmd]$ {' '.join(cmd)}[/cmd]")
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     output = ((result.stdout or "") + (result.stderr or "")).strip()
     if output:
         console.print(f"[dim]{output.splitlines()[-1]}[/dim]")

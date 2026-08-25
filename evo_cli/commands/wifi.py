@@ -69,7 +69,7 @@ EPILOG = Text.from_markup(
 def _run(cmd, timeout=20, input_text=None, capture=True):
     """Run a command; return the CompletedProcess, or None if it could not start."""
     try:
-        return subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout, input=input_text)
+        return subprocess.run(cmd, capture_output=capture, text=True, timeout=timeout, input=input_text, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
 

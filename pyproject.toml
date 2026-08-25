@@ -7,7 +7,7 @@ name = "evo_cli"
 dynamic = ["version"]
 description = "Evolution CLI - a developer toolbox for setting up dev machines"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "maycuatroi" }]
 keywords = ["cli", "ssh", "miniconda", "cloudflare", "devtools"]
 classifiers = [
@@ -34,7 +34,7 @@ test = [
     "pytest",
     "pytest-cov",
     "coverage",
-    "ruff",
+    "ruff>=0.16,<0.17",
     "Pillow>=10.0",
     "numpy>=1.24",
 ]
@@ -54,14 +54,15 @@ include = ["evo_cli*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-evo_cli = ["VERSION", "commands/harness/web/index.html", "commands/harness/web/assets/*"]
+evo_cli = ["VERSION", "commands/harness/web/*", "commands/harness/web/assets/*"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 extend-select = ["I"]
+ignore = ["BLE001", "DTZ005", "DTZ011", "S110", "S112"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

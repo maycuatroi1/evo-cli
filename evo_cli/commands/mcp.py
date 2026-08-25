@@ -34,6 +34,7 @@ def claude_has_server(name):
         ["claude", "mcp", "get", name],
         capture_output=True,
         text=True,
+        check=False,
     )
     return result.returncode == 0
 

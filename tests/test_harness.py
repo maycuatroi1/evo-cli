@@ -1,15 +1,18 @@
 import importlib
 import json
+import os
 import socket
 import struct
 import subprocess
 import threading
 from urllib.request import Request, urlopen
 
+import pytest
+import rich_click as click
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
-from evo_cli.commands.harness._model import step_title
+from evo_cli.commands.harness._model import find_plan, load_plan_file, step_title
 from evo_cli.commands.harness._server import Handler, Server, build_server
 
 # harness/__init__ binds the command object to the name `pull`, shadowing the submodule,
@@ -252,3 +255,85 @@ def test_step_title_folds_whitespace_and_tolerates_an_empty_step():
     assert step_title({}) == ""
     assert step_title({"title": "   "}) == ""
     assert step_title({"title": "   ", "what": "fallback wins"}) == "fallback wins"
+
+
+def _plan_harness(tmp_path):
+    root = tmp_path / "cluster"
+    (root / "plans" / "active").mkdir(parents=True)
+    (root / "plans" / "completed").mkdir(parents=True)
+    manifest = root / "harness.yaml"
+    manifest.write_text("name: test-cluster\nrepos: []\n", encoding="utf-8")
+    return manifest, root / "plans"
+
+
+def test_load_plan_file_reparses_once_the_file_changes(tmp_path):
+    _manifest, plans = _plan_harness(tmp_path)
+    path = plans / "active" / "shift.yaml"
+    path.write_text("id: shift\ngoal: first\nsteps: []\n", encoding="utf-8")
+
+    assert load_plan_file(path).raw["goal"] == "first"
+    assert load_plan_file(path) is load_plan_file(path)
+
+    stamp = path.stat().st_mtime_ns
+    path.write_text("id: shift\ngoal: second\nsteps: []\n", encoding="utf-8")
+    # A same-tick rewrite is what the size half of the key is there to catch, but the
+    # bodies here are the same length, so the timestamp has to be forced apart.
+    os.utime(path, ns=(stamp + 1_000_000_000, stamp + 1_000_000_000))
+
+    assert load_plan_file(path).raw["goal"] == "second"
+
+
+def test_find_plan_prefers_the_active_copy_over_the_completed_one(tmp_path):
+    manifest, plans = _plan_harness(tmp_path)
+    (plans / "active" / "twin.yaml").write_text("id: twin\ngoal: live\nsteps: []\n", encoding="utf-8")
+    (plans / "completed" / "twin.yaml").write_text("id: twin\ngoal: done\nsteps: []\n", encoding="utf-8")
+
+    found = find_plan(manifest, "twin")
+
+    assert found.area == "active"
+    assert found.raw["goal"] == "live"
+
+
+def test_find_plan_keeps_the_stem_match_winning_when_the_named_file_owns_another_id(tmp_path):
+    # The direct lookup has to hand back to the full scan here, because only the scan knows
+    # that a stem match outranks an id match declared by a later-sorting file.
+    manifest, plans = _plan_harness(tmp_path)
+    (plans / "active" / "wanted.yaml").write_text("id: something-else\ngoal: by-stem\nsteps: []\n", encoding="utf-8")
+    (plans / "completed" / "elsewhere.yaml").write_text("id: wanted\ngoal: by-id\nsteps: []\n", encoding="utf-8")
+
+    found = find_plan(manifest, "wanted")
+
+    assert found.path.name == "wanted.yaml"
+    assert found.raw["goal"] == "by-stem"
+
+
+def test_find_plan_resolves_by_id_when_no_file_carries_the_name(tmp_path):
+    manifest, plans = _plan_harness(tmp_path)
+    (plans / "completed" / "elsewhere.yaml").write_text("id: wanted\ngoal: real\nsteps: []\n", encoding="utf-8")
+
+    found = find_plan(manifest, "wanted")
+
+    assert found.path.name == "elsewhere.yaml"
+    assert found.raw["goal"] == "real"
+
+
+def test_find_plan_still_resolves_a_unique_partial_match_and_lists_what_it_knows(tmp_path):
+    manifest, plans = _plan_harness(tmp_path)
+    (plans / "active" / "alpha.yaml").write_text("id: alpha-one\ngoal: a\nsteps: []\n", encoding="utf-8")
+    (plans / "active" / "beta.yaml").write_text("id: beta-two\ngoal: b\nsteps: []\n", encoding="utf-8")
+
+    assert find_plan(manifest, "alpha-o").id == "alpha-one"
+
+    with pytest.raises(click.ClickException) as caught:
+        find_plan(manifest, "nothing-like-this")
+    message = caught.value.format_message()
+    assert "alpha-one" in message and "beta-two" in message
+
+
+def test_find_plan_refuses_to_walk_out_of_the_plans_directory(tmp_path):
+    manifest, plans = _plan_harness(tmp_path)
+    (plans / "secret.yaml").write_text("id: secret\ngoal: hidden\nsteps: []\n", encoding="utf-8")
+
+    for probe in ("../secret", "..\\secret", "../../harness"):
+        with pytest.raises(click.ClickException):
+            find_plan(manifest, probe)

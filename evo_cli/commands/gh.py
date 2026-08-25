@@ -127,6 +127,7 @@ def gh_version():
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return "unknown"

@@ -60,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
     manifest_path: Path = Path()
 
-    def log_message(self, *args):  # noqa: A003 - silence the default stderr access log
+    def log_message(self, *args):
         pass
 
     # A browser that closes a tab, reloads, or drops the SSE stream kills the keep-alive socket
@@ -133,13 +133,15 @@ class Handler(BaseHTTPRequestHandler):
     def _api(self, route: str, query: dict):
         manifest = self.manifest_path
         if route == "/api/state":
+            info = cluster(manifest)
+            seams = load_seams(manifest)
             self._json(
                 {
                     "digest": digest(manifest),
                     "generatedAt": time.time(),
-                    "cluster": cluster(manifest),
-                    "seams": load_seams(manifest),
-                    "seamGraph": seam_graph(manifest),
+                    "cluster": info,
+                    "seams": seams,
+                    "seamGraph": seam_graph(manifest, info, seams),
                     "deployments": load_deployments(manifest),
                     "plans": [p.summary() for p in load_plans(manifest)],
                 }

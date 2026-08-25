@@ -127,6 +127,17 @@ SPECS = [
         "keys": ["dokploy_url", "dokploy_api_key", "dokploy_fu_url", "dokploy_fu_api_key"],
     },
     {
+        "path": "infra/ngrok.json",
+        "id": "ngrok",
+        "service": "ngrok",
+        "category": "infra",
+        "type": "api_key",
+        "lifetime": "stable",
+        "description": "ngrok agent authtoken (evo setup ngrok, ngrok http)",
+        "rotate": "https://dashboard.ngrok.com/get-started/your-authtoken -> regenerate",
+        "keys": ["ngrok_authtoken"],
+    },
+    {
         "path": "infra/railway.json",
         "id": "railway",
         "service": "Railway",

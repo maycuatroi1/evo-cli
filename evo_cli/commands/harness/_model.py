@@ -8,7 +8,7 @@ from typing import Any
 import rich_click as click
 import yaml
 
-from evo_cli.commands.harness._paths import load_repos, read_yaml
+from evo_cli.commands.harness._paths import load_repos, read_yaml, yaml_load
 
 SECTIONS = ("references", "repos", "steps", "decisions", "tech_debt", "open_questions")
 AREAS = ("active", "completed")
@@ -170,32 +170,64 @@ class Plan:
         return data
 
 
+_PLAN_CACHE: dict[str, tuple[tuple[int, int], Plan]] = {}
+
+
 def load_plan_file(path: Path) -> Plan:
+    """Cached on the same (mtime_ns, size) pair `digest` hashes, so the cache can never be
+    less sensitive to a change than the thing driving the dashboard's reload.
+
+    Stat before read, and store under the pre-read stat: a write landing in that window
+    caches new bytes under an old key, which the next request re-parses. The reverse order
+    caches stale bytes under a fresh key and stays stale until the following write.
+    """
+    stat = path.stat()
+    key = (stat.st_mtime_ns, stat.st_size)
+    cached = _PLAN_CACHE.get(str(path))
+    if cached is not None and cached[0] == key:
+        return cached[1]
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        raw = yaml_load(path.read_bytes()) or {}
     except yaml.YAMLError as exc:
         raise click.ClickException(f"Broken YAML: {path}\n{exc}") from exc
     if not isinstance(raw, dict):
         raise click.ClickException(f"A plan must be a mapping at the root: {path}")
-    return Plan(id=str(raw.get("id") or path.stem), path=path, area=path.parent.name, raw=raw)
+    plan = Plan(id=str(raw.get("id") or path.stem), path=path, area=path.parent.name, raw=raw)
+    _PLAN_CACHE[str(path)] = (key, plan)
+    return plan
 
 
-def load_plans(manifest_path: Path, area: str | None = None) -> list[Plan]:
+def plan_paths(manifest_path: Path, area: str | None = None) -> list[Path]:
     root = plans_dir(manifest_path)
     if not root.is_dir():
         return []
-    areas = (area,) if area else AREAS
-    found: list[Plan] = []
-    for name in areas:
+    found: list[Path] = []
+    for name in (area,) if area else AREAS:
         directory = root / name
-        if not directory.is_dir():
-            continue
-        for path in sorted(directory.glob("*.yaml")):
-            found.append(load_plan_file(path))
+        if directory.is_dir():
+            found.extend(sorted(directory.glob("*.yaml")))
     return found
 
 
+def load_plans(manifest_path: Path, area: str | None = None) -> list[Plan]:
+    return [load_plan_file(path) for path in plan_paths(manifest_path, area)]
+
+
 def find_plan(manifest_path: Path, plan_id: str) -> Plan:
+    # `_server` unquotes the route before splitting it, so a plan id can still carry a
+    # separator. Rejecting those here keeps the direct lookup inside `plans/<area>/`.
+    if plan_id and Path(plan_id).name == plan_id:
+        root = plans_dir(manifest_path)
+        for name in AREAS:
+            direct = root / name / f"{plan_id}.yaml"
+            if direct.is_file():
+                plan = load_plan_file(direct)
+                if plan.id == plan_id:
+                    return plan
+                # The file declares another id, so only the full scan can decide whether
+                # some other plan owns this one. Looking in `completed` first would not.
+                break
+
     plans = load_plans(manifest_path)
     matches = [p for p in plans if p.id == plan_id or p.path.stem == plan_id]
     if matches:
@@ -341,7 +373,9 @@ def digest(manifest_path: Path) -> str:
     root = harness_root(manifest_path)
     parts = []
     targets = [manifest_path, contracts_file(manifest_path), deployments_file(manifest_path)]
-    targets.extend(sorted(plans_dir(manifest_path).rglob("*.yaml")) if plans_dir(manifest_path).is_dir() else [])
+    # Has to scan exactly what `load_plans` scans. A wider sweep sees YAML the dashboard
+    # never lists, so its mtime keeps flipping the digest and forcing pointless reloads.
+    targets.extend(plan_paths(manifest_path))
     targets.extend(sorted((root / "principles").glob("*.md")) if (root / "principles").is_dir() else [])
     for path in targets:
         try:

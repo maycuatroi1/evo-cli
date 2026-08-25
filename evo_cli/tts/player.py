@@ -50,6 +50,7 @@ def _play_windows(path):
         text=True,
         encoding="utf-8",
         errors="replace",
+        check=False,
     )
     return result.returncode == 0
 
@@ -59,7 +60,7 @@ def play(path):
     for command in _players(path):
         if not shutil.which(command[0]):
             continue
-        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         if result.returncode == 0:
             return True
     if platform.system() == "Windows":

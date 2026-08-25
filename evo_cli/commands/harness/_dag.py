@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 from evo_cli.commands.harness._model import Plan, cluster, load_seams, step_title, tone_of
@@ -123,9 +124,9 @@ def _finish(nodes: list[dict], edges: list[dict], warnings: list[dict]) -> dict:
     }
 
 
-def seam_graph(manifest_path: Path) -> dict:
-    info = cluster(manifest_path)
-    seams = load_seams(manifest_path)
+def seam_graph(manifest_path: Path, info: dict | None = None, seams: list[dict] | None = None) -> dict:
+    info = cluster(manifest_path) if info is None else info
+    seams = load_seams(manifest_path) if seams is None else seams
     known = {r["name"]: r for r in info["repos"]}
 
     order: list[str] = []
@@ -394,7 +395,7 @@ def plan_step_graph(plan: Plan) -> dict:
 
     if not declared:
         for lane in lanes.values():
-            for first, second in zip(lane, lane[1:]):
+            for first, second in itertools.pairwise(lane):
                 add(first, second, "same repo, in order", "sequence")
         cluster_lane = lanes.get(CLUSTER_REPO, [])
         for repo, lane in lanes.items():

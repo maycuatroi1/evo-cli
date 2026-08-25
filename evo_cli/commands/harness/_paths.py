@@ -6,6 +6,15 @@ from pathlib import Path
 import rich_click as click
 import yaml
 
+try:
+    from yaml import CSafeLoader as _SafeLoader
+except ImportError:
+    from yaml import SafeLoader as _SafeLoader
+
+
+def yaml_load(data):
+    return yaml.load(data, Loader=_SafeLoader)
+
 
 def read_yaml(path, required=True):
     if not path.is_file():
@@ -13,7 +22,7 @@ def read_yaml(path, required=True):
             raise click.ClickException(f"Harness manifest not found: {path}")
         return {}
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        data = yaml_load(path.read_bytes()) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise click.ClickException(f"Cannot read {path}: {exc}") from exc
     if not isinstance(data, dict):

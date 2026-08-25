@@ -17,6 +17,7 @@ from evo_cli.commands.localproxy import localproxy
 from evo_cli.commands.mcp import mcp_group
 from evo_cli.commands.miniconda import miniconda
 from evo_cli.commands.netcheck import netcheck
+from evo_cli.commands.ngrok import setup_ngrok
 from evo_cli.commands.opencode import setup_opencode
 from evo_cli.commands.plantuml import plantuml
 from evo_cli.commands.serp import serp_group, setup_serp
@@ -57,6 +58,7 @@ def cli():
 setup_group.add_command(agent_toy)
 setup_group.add_command(setup_claude)
 setup_group.add_command(setup_gh)
+setup_group.add_command(setup_ngrok)
 setup_group.add_command(setup_opencode)
 setup_group.add_command(setup_serp)
 setup_group.add_command(miniconda)

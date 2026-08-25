@@ -10,6 +10,7 @@ import {
   type Node,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import '../styles/vendor.css'
 import { useEffect, useMemo } from 'react'
 import { layout, neighbourhood, type FlowEdgeData, type FlowNodeData } from '../layout'
 import type { Graph } from '../types'

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "curator": {
+    "last_run_at": "2026-08-23T19:28:27+00:00",
+    "paused": false
+  },
+  "skills": {
+    "windows-ipv6-dns-fix": {
+      "created_at": "2026-08-13T07:32:58+00:00",
+      "state": "pending",
+      "source_session": "47ca5c41-399e-4a48-a0a9-70458bf25c08",
+      "description": "Diagnose and fix IPv6 DNS resolution lag causing network slowness on Windows",
+      "use_count": 0,
+      "last_used_at": null,
+      "last_seen_session": null,
+      "pinned": false
+    },
+    "html-form-submit-button-name-clobber": {
+      "created_at": "2026-08-25T00:41:40+00:00",
+      "state": "pending",
+      "source_session": "17132ff0-0e62-4b3d-b504-f1add87835f5",
+      "description": "Diagnose and fix form submission failures when button is named 'submit'",
+      "use_count": 0,
+      "last_used_at": null,
+      "last_seen_session": null,
+      "pinned": false
+    }
+  }
+}

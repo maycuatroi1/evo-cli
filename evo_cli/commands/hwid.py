@@ -60,7 +60,7 @@ EPILOG = Text.from_markup(
 def _run(cmd, timeout=10):
     """Run a command, return stdout on success, else None (never raises)."""
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout if out.returncode == 0 else None
