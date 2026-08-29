@@ -20,6 +20,7 @@ from evo_cli.commands.netcheck import netcheck
 from evo_cli.commands.ngrok import setup_ngrok
 from evo_cli.commands.opencode import setup_opencode
 from evo_cli.commands.plantuml import plantuml
+from evo_cli.commands.route import route_group
 from evo_cli.commands.serp import serp_group, setup_serp
 from evo_cli.commands.site2s import site2s
 from evo_cli.commands.ssh import setupssh
@@ -79,6 +80,7 @@ cli.add_command(localproxy)
 cli.add_command(mcp_group)
 cli.add_command(netcheck)
 cli.add_command(plantuml)
+cli.add_command(route_group)
 cli.add_command(serp_group)
 cli.add_command(sysmon)
 cli.add_command(tts_group)
