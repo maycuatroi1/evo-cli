@@ -130,7 +130,7 @@ dmypy.json
 
 # templates
 .github/templates/*
-.claude/skills/learned/.processed/
+**/.claude/skills/learned/.processed/
 
 # Dashboard sources for `evo harness serve`. The built bundle at
 # evo_cli/commands/harness/web/ IS committed - a release wheel ships it so the
@@ -140,7 +140,7 @@ web/.vite/
 
 # macOS
 .DS_Store
-.claude/skills/.learned/.processed/
+**/.claude/skills/.learned/.processed/
 
 # Binary archives (curator backups under .claude/skills/.learned/.backups/)
 *.tar.gz
