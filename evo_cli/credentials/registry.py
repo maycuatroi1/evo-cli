@@ -21,6 +21,17 @@ GENERATED_NOTE = "DO NOT EDIT - generated from credentials/ by `evo cred compile
 
 SPECS = [
     {
+        "path": "infra/openvpn.json",
+        "id": "openvpn",
+        "service": "OpenVPN profiles",
+        "category": "infra",
+        "type": "account",
+        "lifetime": "stable",
+        "description": "Named VPN configurations (including private keys), account credentials and TOTP enrollments",
+        "rotate": "VPN administrator: reissue profile/password and re-enroll TOTP",
+        "keys": ["openvpn"],
+    },
+    {
         "path": "accounts/omelet.json",
         "id": "omelet",
         "service": "Omelet account + n8n webhooks",

@@ -86,6 +86,59 @@ Options:
 - `-f, --force` - Apply the fix even if the version is not in the affected range
 - `--unpin` - Undo the fix: re-enable the auto-updater and install the latest build
 
+#### OpenVPN
+
+Manage separate VPN profiles on macOS or Linux. Install the OpenVPN binary first
+(`brew install openvpn` on macOS); QR enrollment also needs `brew install zbar`.
+
+```bash
+evo openvpn list --app                         # inventory OpenVPN Connect, without changing it
+evo openvpn import work ~/Downloads/work.ovpn  # also accepts .ovpn.txt
+evo openvpn credentials work --username alice --qr ~/Downloads/otp.png
+evo openvpn list                               # numbered table: state, tunnel IP, remote
+evo openvpn connect work                       # hidden sudo prompt, then a live status view
+evo openvpn connect 2                          # by # from list; omit to pick (last one is default)
+evo openvpn status -w                          # watch again later; alerts on drops
+evo openvpn disconnect                         # picks the active tunnel
+evo cred sync push
+```
+
+`connect`, `status`, `disconnect`, `otp` and `credentials` take a profile name, its `#`
+from `list`, or nothing: a single (or single active) profile is used directly, otherwise a
+numbered prompt appears. Without a terminal, pass the name so scripts never block on a prompt.
+
+After connecting in a terminal, `connect` keeps a live view of state, uptime, traffic and
+reconnects (`--no-watch` returns immediately). Ctrl-C stops watching and offers to
+disconnect; the tunnel otherwise keeps running. Soft drops (`ping-restart`,
+`connection-reset`) reconnect automatically with a fresh OTP; the view logs each one and
+raises a desktop notification, and exits 1 with the reason if the tunnel goes down.
+
+Import each profile under a different name. Imports refuse to overwrite an existing
+name unless `--replace` is supplied; replacement preserves that profile's credentials.
+Configurations (including embedded private keys), passwords and TOTP enrollments live
+under `openvpn.profiles.NAME` in `evo cred`. They sync through the existing private
+GitHub credential repository. That store is plaintext, protected by local file
+permissions and private-repository access, not an encrypted vault. Do not sync it to
+a public repository or treat storing the password and OTP together as independent factors.
+
+Use `credentials NAME --otp` for hidden manual enrollment input instead of a QR image.
+`evo openvpn otp NAME` explicitly prints the current code; list and status never print
+secrets. Sudo passwords are not stored. Automation can pass the sudo password on stdin
+with `connect NAME --sudo-password-stdin`, not in an argument or environment variable.
+
+Connections run in the background with a private Unix management socket and an
+OTP-aware worker that remains available for reauthentication. Static challenges use
+OpenVPN's SCRV1 protocol. Dynamic challenges and encrypted private-key prompts are not
+supported. Only trusted, self-contained TUN client profiles are accepted; scripts,
+plugins and external certificate/key files are refused. Runtime data uses
+`~/.evo/openvpn` (override with `EVO_OPENVPN_HOME`).
+
+Only one evo-managed tunnel runs at a time. Disconnect any GUI VPN before connecting
+through evo; GUI profiles are never removed or modified. Server routes are applied,
+but this backend does not change system DNS. Internal IP access works through the
+tunnel; private DNS names may need your organization's DNS configuration. `CONNECTED`
+confirms the tunnel, not the availability of a particular internal application.
+
 #### Credentials
 
 `evo` owns the omelet credential store. The source of truth is a folder of one JSON file per service
