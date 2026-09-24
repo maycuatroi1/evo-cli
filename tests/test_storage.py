@@ -34,14 +34,12 @@ def test_parse_du():
 
 
 def test_parse_docker_df_counts_images_and_build_cache_only():
-    text = "\n".join(
-        [
-            '{"Reclaimable":"4.915GB (56%)","Size":"8.645GB","Type":"Images"}',
-            '{"Reclaimable":"63B (0%)","Size":"187.1kB","Type":"Containers"}',
-            '{"Reclaimable":"655.2MB (41%)","Size":"1.576GB","Type":"Local Volumes"}',
-            '{"Reclaimable":"11.02GB","Size":"14.29GB","Type":"Build Cache"}',
-            "not json",
-        ]
+    text = (
+        '{"Reclaimable":"4.915GB (56%)","Size":"8.645GB","Type":"Images"}\n'
+        '{"Reclaimable":"63B (0%)","Size":"187.1kB","Type":"Containers"}\n'
+        '{"Reclaimable":"655.2MB (41%)","Size":"1.576GB","Type":"Local Volumes"}\n'
+        '{"Reclaimable":"11.02GB","Size":"14.29GB","Type":"Build Cache"}\n'
+        "not json\n"
     )
     assert storage.parse_docker_df(text) == 4_915_000_000 + 11_020_000_000
     assert storage.parse_docker_df("") == 0

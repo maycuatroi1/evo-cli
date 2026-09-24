@@ -24,18 +24,73 @@ from evo_cli.credentials.store import CredentialError, compile_flat, read_flat, 
 APP = Path("/Applications/OpenVPN Connect/OpenVPN Connect.app/Contents/MacOS/OpenVPN Connect")
 INLINE = {"ca", "cert", "key", "tls-auth", "tls-crypt", "tls-crypt-v2", "extra-certs"}
 # Only self-contained client profiles: never execute scripts/plugins or follow includes as root.
-OPTIONS = set(
-    """
-client tls-client push-peer-info dev dev-type proto remote remote-random remote-random-hostname
-nobind lport rport port persist-key persist-tun
-resolv-retry connect-retry connect-retry-max connect-timeout float tun-mtu mssfix topology
-auth cipher data-ciphers data-ciphers-fallback key-direction remote-cert-tls remote-cert-ku remote-cert-eku
-verify-x509-name tls-version-min tls-version-max tls-cipher tls-ciphersuites reneg-sec reneg-bytes reneg-pkts
-auth-user-pass static-challenge auth-nocache pull pull-filter route route-ipv6 route-gateway route-metric
-redirect-gateway redirect-private route-nopull dhcp-option explicit-exit-notify keepalive ping ping-restart
-ping-exit sndbuf rcvbuf verb mute allow-compression comp-lzo compress setenv
-""".split()
-)
+OPTIONS = {
+    "client",
+    "tls-client",
+    "push-peer-info",
+    "dev",
+    "dev-type",
+    "proto",
+    "remote",
+    "remote-random",
+    "remote-random-hostname",
+    "nobind",
+    "lport",
+    "rport",
+    "port",
+    "persist-key",
+    "persist-tun",
+    "resolv-retry",
+    "connect-retry",
+    "connect-retry-max",
+    "connect-timeout",
+    "float",
+    "tun-mtu",
+    "mssfix",
+    "topology",
+    "auth",
+    "cipher",
+    "data-ciphers",
+    "data-ciphers-fallback",
+    "key-direction",
+    "remote-cert-tls",
+    "remote-cert-ku",
+    "remote-cert-eku",
+    "verify-x509-name",
+    "tls-version-min",
+    "tls-version-max",
+    "tls-cipher",
+    "tls-ciphersuites",
+    "reneg-sec",
+    "reneg-bytes",
+    "reneg-pkts",
+    "auth-user-pass",
+    "static-challenge",
+    "auth-nocache",
+    "pull",
+    "pull-filter",
+    "route",
+    "route-ipv6",
+    "route-gateway",
+    "route-metric",
+    "redirect-gateway",
+    "redirect-private",
+    "route-nopull",
+    "dhcp-option",
+    "explicit-exit-notify",
+    "keepalive",
+    "ping",
+    "ping-restart",
+    "ping-exit",
+    "sndbuf",
+    "rcvbuf",
+    "verb",
+    "mute",
+    "allow-compression",
+    "comp-lzo",
+    "compress",
+    "setenv",
+}
 
 
 def profile_name(name):
@@ -164,7 +219,11 @@ def qr_totp(path):
     if not decoder:
         raise CredentialError("QR decoding needs zbarimg (brew install zbar), or enter the secret without --qr.")
     result = subprocess.run(
-        [decoder, "--quiet", "--raw", str(Path(path).resolve())], capture_output=True, text=True, timeout=30
+        [decoder, "--quiet", "--raw", str(Path(path).resolve())],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     values = [line for line in result.stdout.splitlines() if line.startswith("otpauth://")]
     if result.returncode or len(values) != 1:
@@ -175,7 +234,7 @@ def qr_totp(path):
 def app_profiles():
     if not APP.exists():
         return []
-    result = subprocess.run([str(APP), "--list-profiles"], capture_output=True, text=True, timeout=15)
+    result = subprocess.run([str(APP), "--list-profiles"], capture_output=True, text=True, timeout=15, check=False)
     if result.returncode:
         raise CredentialError("Cannot list OpenVPN Connect profiles.")
     try:
@@ -264,8 +323,8 @@ def auth_commands(line, profile):
         settings = profile.get("totp")
         if not settings:
             raise CredentialError("This profile needs OTP; run evo openvpn credentials PROFILE --otp.")
-        password = "SCRV1:{}:{}".format(
-            base64.b64encode(password.encode()).decode(), base64.b64encode(totp(settings).encode()).decode()
+        password = (
+            f"SCRV1:{base64.b64encode(password.encode()).decode()}:{base64.b64encode(totp(settings).encode()).decode()}"
         )
     return f'username "Auth" {quote(username)}\npassword "Auth" {quote(password)}\n'
 
@@ -282,7 +341,8 @@ def worker(name, timeout):
     state = {"profile": name, "state": "STARTING"}
     # Served over the control socket for diagnosis; kept in memory only, gone with the worker.
     log = deque(maxlen=200)
-    lock = open(runtime_dir() / "active.lock", "a")
+    # Held for the worker's whole life (flock) and closed in the outer finally.
+    lock = open(runtime_dir() / "active.lock", "a")  # noqa: SIM115
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
