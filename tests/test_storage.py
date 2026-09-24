@@ -1,9 +1,14 @@
 import json
+import sys
 
+import pytest
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
 from evo_cli.commands import storage
+
+# The command exits on Windows, and the uv test builds POSIX command lines.
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="evo storage supports macOS and Linux only")
 
 
 def test_storage_registered():
@@ -127,6 +132,7 @@ def _fake_uv_cache(tmp_path):
     return root
 
 
+@posix_only
 def test_uv_clean_keeps_envs_a_process_runs_from(tmp_path, monkeypatch):
     root = _fake_uv_cache(tmp_path)
     monkeypatch.setattr(storage, "HOME", tmp_path / "home")
@@ -185,6 +191,7 @@ def test_survey_target_statuses():
     assert storage.survey_target(_fake_target("d", calls=[]), "")["status"] == "ready"
 
 
+@posix_only
 def test_clean_requires_targets():
     result = CliRunner().invoke(cli, ["storage", "clean"])
     assert result.exit_code == 2
@@ -198,6 +205,7 @@ def _patch_targets(monkeypatch, calls):
     monkeypatch.setattr(storage, "swap_state", lambda: None)
 
 
+@posix_only
 def test_clean_dry_run_changes_nothing(monkeypatch):
     calls = []
     _patch_targets(monkeypatch, calls)
@@ -207,6 +215,7 @@ def test_clean_dry_run_changes_nothing(monkeypatch):
     assert "Dry run" in result.output
 
 
+@posix_only
 def test_clean_runs_ready_targets_only(monkeypatch):
     calls = []
     _patch_targets(monkeypatch, calls)
@@ -217,6 +226,7 @@ def test_clean_runs_ready_targets_only(monkeypatch):
     assert "a note" in result.output
 
 
+@posix_only
 def test_clean_aborts_when_not_confirmed(monkeypatch):
     calls = []
     _patch_targets(monkeypatch, calls)
@@ -226,6 +236,7 @@ def test_clean_aborts_when_not_confirmed(monkeypatch):
     assert "Aborted" in result.output
 
 
+@posix_only
 def test_audit_json(monkeypatch):
     calls = []
     monkeypatch.setattr(storage, "TARGETS", {"uv": _fake_target("uv", size=4096, calls=calls)})
