@@ -25,6 +25,7 @@ from evo_cli.commands.route import route_group
 from evo_cli.commands.serp import serp_group, setup_serp
 from evo_cli.commands.site2s import site2s
 from evo_cli.commands.ssh import setupssh
+from evo_cli.commands.storage import storage
 from evo_cli.commands.sysmon import sysmon
 from evo_cli.commands.tts import tts_group
 from evo_cli.commands.update import update
@@ -84,6 +85,7 @@ cli.add_command(openvpn_group)
 cli.add_command(plantuml)
 cli.add_command(route_group)
 cli.add_command(serp_group)
+cli.add_command(storage)
 cli.add_command(sysmon)
 cli.add_command(tts_group)
 cli.add_command(update)

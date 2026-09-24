@@ -332,7 +332,7 @@ def connect(name, timeout, sudo_password_stdin, watch):
     if os.geteuid() != 0:
         if sudo_password_stdin:
             password = sys.stdin.readline().rstrip("\n")
-        elif subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode:
+        elif subprocess.run(["sudo", "-n", "true"], capture_output=True, check=False).returncode:
             password = getpass.getpass("sudo password (not stored): ")
     state_path = Path(str(_guard(vpn.session_path, name)) + ".json")
     state_path.unlink(missing_ok=True)

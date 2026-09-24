@@ -20,6 +20,8 @@ SECRET = base64.b32encode(b"12345678901234567890").decode()
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
+    if sys.platform == "win32":
+        pytest.skip("evo openvpn runs on macOS/Linux only (Unix sockets, fcntl, /tmp)")
     monkeypatch.setenv("OMELET_DIR", str(tmp_path / "store"))
     monkeypatch.setenv("OMELET_CONFIG", str(tmp_path / "flat.json"))
     # Keep Unix socket paths below the macOS 104-byte limit.
