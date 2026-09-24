@@ -338,6 +338,29 @@ the command line, where any process listing would show it. `evo setup serp --wri
 `~/.config/serpapi/config.toml` (mode 600) if you also want the bare `serpapi` binary to
 authenticate on its own.
 
+#### Storage
+
+See what fills the disk and clear developer caches (macOS and Linux):
+
+```bash
+evo storage audit                  # free space, swap, size of every known cache
+evo storage audit --deep           # also rank the biggest folders in ~ (and ~/Library)
+evo storage clean --all -n         # dry run: what a full clean would remove
+evo storage clean uv npm gradle    # clear only these caches (asks first)
+evo storage clean --all -y         # clear everything without asking
+```
+
+Targets: `uv`, `npm` (+ npx), `pip`, `conda`, `pnpm`, `gradle` (caches + wrapper dists), `go`,
+`docker` (build cache + unused images), `brew`, `xcode` (DerivedData + unavailable simulators) and
+`updaters` (`*.ShipIt`, `*-updater`, editor VSIX caches). Only data the tools rebuild on demand is
+touched - never projects, VMs or app data.
+
+`clean` reports the space it actually freed, measured on the filesystem: on APFS uv clones cache
+files into venvs, so a 32 GB uv cache can give back only a few GB. Caches in use are left alone -
+uv/npx envs that a running process was started from are kept, and Gradle is skipped while a Gradle
+daemon runs. Files owned by another user (for example from a past `sudo uvx`) are reported, not
+removed with sudo.
+
 ## `evo harness` - read a repo cluster
 
 A harness is a repo that describes a *cluster* of repos: `harness.yaml` lists them, `contracts.yaml`
