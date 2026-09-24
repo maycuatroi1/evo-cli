@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 EPILOG = Text.from_markup(
     "[bold]Examples[/bold]\n\n"
     "  [cyan]evo setupssh[/cyan]\n"
-    "  [cyan]evo setupssh -H 42.96.16.233 -u root[/cyan]\n"
+    "  [cyan]evo setupssh -H 203.0.113.10 -u root[/cyan]\n"
     "  [cyan]evo setupssh -H host -u root -P 2222 -i ~/.ssh/id_ed25519[/cyan]"
 )
 

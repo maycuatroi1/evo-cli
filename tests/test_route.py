@@ -34,7 +34,7 @@ def test_is_bogus():
     assert _dns.is_bogus("127.0.0.1")
     assert _dns.is_bogus("0.0.0.0")
     assert not _dns.is_bogus("162.159.152.4")
-    assert not _dns.is_bogus("118.68.82.144")
+    assert not _dns.is_bogus("203.0.113.7")
 
 
 def test_encode_qname_round_trip():

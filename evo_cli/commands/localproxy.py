@@ -2,9 +2,9 @@
 evo localproxy — HTTPS reverse proxy mapping https://{domain}.local -> https://{domain}.
 
 Use case: browse / test a real HTTPS site under a local alias. A request to
-``https://edunext.ptudev.net.local`` is TLS-terminated locally with a leaf cert
+``https://app.example.com.local`` is TLS-terminated locally with a leaf cert
 issued by a small local CA, the ``.local`` suffix is stripped, and the request is
-forwarded over TLS to the real ``https://edunext.ptudev.net``.
+forwarded over TLS to the real ``https://app.example.com``.
 
 Rewrites that make logins / redirects stay inside the alias:
   - outbound (request):  Host, Origin, Referer   {domain}.local -> {domain}
@@ -604,10 +604,10 @@ class LocalReverseProxy:
 
 EPILOG = Text.from_markup(
     "[bold]Examples[/bold]\n\n"
-    "  [cyan]evo localproxy edunext.ptudev.net --install-ca[/cyan]\n"
-    "  [cyan]evo localproxy edunext.ptudev.net api.ptudev.net[/cyan]\n"
-    "  [cyan]evo localproxy edunext.ptudev.net -p 8443[/cyan]   (if 443 is busy)\n"
-    "  [cyan]evo localproxy edunext.ptudev.net --no-hosts[/cyan]"
+    "  [cyan]evo localproxy app.example.com --install-ca[/cyan]\n"
+    "  [cyan]evo localproxy app.example.com api.example.com[/cyan]\n"
+    "  [cyan]evo localproxy app.example.com -p 8443[/cyan]   (if 443 is busy)\n"
+    "  [cyan]evo localproxy app.example.com --no-hosts[/cyan]"
 )
 
 
