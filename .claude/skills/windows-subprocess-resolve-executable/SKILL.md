@@ -1,6 +1,7 @@
 ---
 name: windows-subprocess-resolve-executable
 description: Fix WinError 2 when subprocess.run cannot find .cmd/.bat executables on Windows (npx, npm, pip-installed CLIs)
+learned: true
 pattern_type: error_resolution
 learned_at: 2026-06-29T05:35:46
 source_session: e9fd9f95-e02d-4bf3-8721-7430871ad3ba
@@ -43,6 +44,12 @@ Then use resolved command in subprocess.run:
 cmd = resolve_executable(['npx', '-y', '@playwright/mcp@latest'])
 result = subprocess.run(cmd, capture_output=True, text=True)
 ```
+
+## In evo-cli
+
+`evo_cli.console.resolve_executable` already does this, and `run_command` calls it. New code should go through `run_command` rather than calling `subprocess.run` on a bare name.
+
+Caution: running a `.cmd`/`.bat` shim passes arguments through `cmd.exe` parsing ("BatBadBut"), so never pass untrusted input as an argument to a shim.
 
 ## Example
 

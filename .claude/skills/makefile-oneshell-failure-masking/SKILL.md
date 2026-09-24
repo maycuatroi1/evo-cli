@@ -22,5 +22,7 @@ lint:
 	ruff format --check .
 ```
 
+evo-cli's Makefile already sets both lines (da0b0eb); keep `.SHELLFLAGS := -ec` if you touch `.ONESHELL:`.
+
 ## Example
 In evo-cli's `make lint`, if `ruff check` fails but `ruff format` passes, the recipe would exit 0 on Linux (where `.ONESHELL:` is supported) but exit 1 on macOS (where make 3.81 predates `.ONESHELL:` and runs each line separately). Adding `.SHELLFLAGS := -ec` makes behavior consistent across platforms by ensuring the first failure stops execution.

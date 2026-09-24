@@ -1,6 +1,7 @@
 ---
 name: macos-safe-cleanup-sequence
 description: Progressive cleanup of macOS caches and build artifacts, distinguishing safe auto-recoverable vs. risky permanent deletions
+learned: true
 pattern_type: error_resolution
 learned_at: 2026-08-21T12:53:44
 source_session: ba88d061-1744-422b-a5cb-250c1ed20075

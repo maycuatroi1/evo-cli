@@ -1,6 +1,7 @@
 ---
 name: diagnose-macos-ssh
 description: Systematic workflow for checking OpenSSH status, launchd service state, listening ports, and configuration on macOS
+learned: true
 pattern_type: debugging_techniques
 learned_at: 2026-07-18T15:17:54
 source_session: e535ea23-7938-40a1-8c6f-565d4e1f0f5b
@@ -63,7 +64,7 @@ Run these checks in sequence to build a complete picture:
 
 - Most checks run unprivileged; only `sshd -T` and config edits need sudo.
 - Empty sshd_config means macOS built-in defaults apply (PasswordAuthentication: yes, PermitRootLogin: no, etc.).
-- macOS GUI "System Settings → General → Sharing → Remote Login" is equivalent to `sudo systemsetup -setremotelogin on/off`.
+- macOS GUI "System Settings → General → Sharing → Remote Login" is equivalent to `sudo systemsetup -setremotelogin on/off`. On recent macOS, `systemsetup` needs Full Disk Access for the terminal app; without it, use the GUI toggle.
 - If checks pass but remote SSH still fails, issue is likely in firewall, router, or client key setup, not the sshd service itself.
 
 ## Example

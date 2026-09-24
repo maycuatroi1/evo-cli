@@ -1,6 +1,7 @@
 ---
 name: nmap-tuning-for-filtered-hosts
 description: Optimize nmap port scan for hosts with packet filtering or high latency
+learned: true
 pattern_type: debugging_techniques
 learned_at: 2026-09-04T09:32:47
 source_session: 89379a01-a8c5-47d3-a7c6-f1350c76ad8c
