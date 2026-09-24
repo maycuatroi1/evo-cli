@@ -144,3 +144,15 @@ web/.vite/
 
 # Binary archives (curator backups under .claude/skills/.learned/.backups/)
 *.tar.gz
+
+# Codex keeps its own copy of .claude/skills here; .claude/ is the source of truth.
+.agents/
+
+# Local agent settings and secrets: this repo is public.
+.claude/settings.local.json
+.env.*
+*.ovpn
+*.pem
+*.key
+*.p12
+.omelet.json
