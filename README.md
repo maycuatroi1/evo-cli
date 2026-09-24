@@ -99,6 +99,7 @@ evo openvpn list                               # numbered table: state, tunnel I
 evo openvpn connect work                       # hidden sudo prompt, then a live status view
 evo openvpn connect 2                          # by # from list; omit to pick (last one is default)
 evo openvpn status -w                          # watch again later; alerts on drops
+evo openvpn log -n 80                          # recent OpenVPN log lines: why it dropped
 evo openvpn disconnect                         # picks the active tunnel
 evo cred sync push
 ```
@@ -112,6 +113,9 @@ reconnects (`--no-watch` returns immediately). Ctrl-C stops watching and offers 
 disconnect; the tunnel otherwise keeps running. Soft drops (`ping-restart`,
 `connection-reset`) reconnect automatically with a fresh OTP; the view logs each one and
 raises a desktop notification, and exits 1 with the reason if the tunnel goes down.
+`evo openvpn log` prints the worker's last 200 OpenVPN log lines, kept in memory only,
+to show why a drop happened. The client sends a keepalive ping every 10 seconds so idle
+TCP sessions survive NAT and firewalls; a keepalive pushed by the server takes precedence.
 
 Import each profile under a different name. Imports refuse to overwrite an existing
 name unless `--replace` is supplied; replacement preserves that profile's credentials.

@@ -141,6 +141,7 @@ def _event(out, name, state, previous):
         line.append(f"  {detail}")
     out.print(line)
     if status == "RECONNECTING":
+        out.print(f"[dim]  Why: evo openvpn log {name}[/dim]")
         _notify(f"{name} dropped ({state.get('last_reason', 'unknown')}); reconnecting")
     elif status == "CONNECTED" and previous != "CONNECTED" and state.get("reconnects"):
         _notify(f"{name} reconnected")
@@ -271,6 +272,18 @@ def status(name, watch):
         _watch(name)
         return
     click.echo(json.dumps(_guard(vpn.request, name), indent=2))
+
+
+@openvpn_group.command("log", help="Show recent OpenVPN log lines; kept in the worker's memory only, never on disk.")
+@click.argument("name", required=False)
+@click.option("-n", "--lines", type=click.IntRange(1, 200), default=40, show_default=True)
+def show_log(name, lines):
+    name = _pick(name, prefer_active=True)
+    state = _guard(vpn.request, name, "log")
+    if "log" not in state:
+        raise click.ClickException(f"{name} has no running worker; logs exist only while it runs.")
+    for line in state["log"][-lines:]:
+        click.echo(line)
 
 
 @openvpn_group.command("disconnect", help="Disconnect only the named evo-managed connection, not the GUI profiles.")

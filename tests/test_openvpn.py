@@ -39,6 +39,7 @@ def test_commands_registered():
         "connect",
         "status",
         "disconnect",
+        "log",
     }
 
 
@@ -182,20 +183,37 @@ sys.stdin.readline()
 with socket.socket(socket.AF_UNIX) as s:
     s.connect(sys.argv[1])
     stream = s.makefile('rb')
-    assert stream.readline() == b'state on\\n'
-    assert stream.readline() == b'bytecount 2\\n'
-    assert stream.readline() == b'hold release\\n'
-    s.sendall(b\">PASSWORD:Need 'Auth' username/password SC:1,OTP\\n\")
-    assert stream.readline().startswith(b'username ')
-    assert b'SCRV1:' in stream.readline()
+
+    # Like OpenVPN 2.6: every (re)start with the hold flag set waits for a fresh "hold release".
+    def hold():
+        s.sendall(b'>HOLD:Waiting for hold release:0\\n')
+        seen = set()
+        while (line := stream.readline()) != b'hold release\\n':
+            assert line, 'hold never released'
+            seen.add(line)
+        return seen
+
+    def auth():
+        s.sendall(b\">PASSWORD:Need 'Auth' username/password SC:1,OTP\\n\")
+        assert stream.readline().startswith(b'username ')
+        assert b'SCRV1:' in stream.readline()
+
+    seen = hold()
+    assert {b'state on\\n', b'log on\\n', b'bytecount 2\\n'} <= seen
+    held = b'hold off\\n' not in seen
+    auth()
     if sys.argv[2] == 'fail':
         s.sendall(b\">PASSWORD:Verification Failed: 'Auth'\\n\")
     else:
         s.sendall(b'>PASSWORD:Auth-Token:ephemeral-secret\\n')
+        s.sendall(b''.join(b'>LOG:1700000000,I,line %d\\n' % n for n in range(250)))
         s.sendall(b'>BYTECOUNT:1024,2048\\n')
         s.sendall(b'>STATE:1,CONNECTED,SUCCESS,10.8.0.2,192.0.2.1\\n')
         if sys.argv[2] == 'reconnect':
-            s.sendall(b'>STATE:2,RECONNECTING,ping-restart,,\\n')
+            s.sendall(b'>STATE:2,RECONNECTING,connection-reset,,\\n')
+            if held:
+                hold()
+            auth()  # --auth-nocache: a restart asks again, with a fresh OTP
             s.sendall(b'>STATE:3,CONNECTED,SUCCESS,10.8.0.2,192.0.2.1\\n')
     assert stream.readline() == b'signal SIGTERM\\n'
 """
@@ -217,6 +235,7 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
         assert "--script-security" in command and "--management-client" in command
         # A soft restart (ping-restart, connection-reset) must reconnect, not exit.
         assert "--remap-usr1" not in command and "--connect-retry-max" not in command
+        assert command[command.index("--ping") + 1] == "10"
         endpoint = command[command.index("--management") + 1]
         return popen([sys.executable, "-c", FAKE_OPENVPN, endpoint, mode], **kwargs)
 
@@ -236,7 +255,10 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
                 assert state["since"] and (state["bytes_in"], state["bytes_out"]) == (1024, 2048)
                 assert not fail
                 if mode == "reconnect":
-                    assert state["reconnects"] == 1 and state["last_reason"] == "ping-restart"
+                    assert state["reconnects"] == 1 and state["last_reason"] == "connection-reset"
+                # Only the newest lines are kept, and a reply larger than one read arrives whole.
+                log = vpn.request("m1", "log")["log"]
+                assert len(log) == 200 and log[-1].endswith("  line 249") and "log" not in vpn.request("m1")
                 vpn.request("m1", "disconnect")
                 break
             time.sleep(0.05)
@@ -322,6 +344,17 @@ def test_watch_clean_stop_and_ctrl_c_leave_no_alert(store, monkeypatch):
     assert result.exit_code == 0 and "m1: stopped." in result.output and notes == []
     result, notes = _watch(store, monkeypatch, [{"state": "CONNECTED", "vpn_ip": "10.8.0.2"}, KeyboardInterrupt()])
     assert result.exit_code == 0 and "keeps running in the background" in result.output and notes == []
+
+
+def test_log_reads_the_live_worker_only(store, monkeypatch):
+    vpn.save_profile("m1", {"config": CONFIG})
+    replies = {"log": {"state": "CONNECTED", "log": [f"09:38:{n:02}  line {n}" for n in range(50)]}}
+    monkeypatch.setattr(vpn, "request", lambda name, command="status": replies.get(command, {"state": "CONNECTED"}))
+    result = CliRunner().invoke(cli, ["openvpn", "log", "m1", "-n", "2"])
+    assert result.exit_code == 0 and result.output == "09:38:48  line 48\n09:38:49  line 49\n"
+    replies.clear()
+    result = CliRunner().invoke(cli, ["openvpn", "log", "m1"])
+    assert result.exit_code == 1 and "no running worker" in result.output
 
 
 def test_qr_decoder_is_local_and_output_is_not_printed(monkeypatch):

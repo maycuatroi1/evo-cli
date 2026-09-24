@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import time
+from collections import deque
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -235,7 +236,11 @@ def request(name, command="status"):
                     return {"profile": name, "state": "STOPPED", "error": last["error"]}
             return {"profile": name, "state": "STOPPED"}
         client.sendall(command.encode() + b"\n")
-        return json.loads(client.recv(8192))
+        # The worker closes after one reply; a log reply spans several reads.
+        chunks = []
+        while chunk := client.recv(65536):
+            chunks.append(chunk)
+        return json.loads(b"".join(chunks))
 
 
 def quote(value):
@@ -275,6 +280,8 @@ def worker(name, timeout):
     config = Path(str(base) + ".ovpn")
     control_path, management_path = str(base) + ".sock", str(base) + ".mgmt"
     state = {"profile": name, "state": "STARTING"}
+    # Served over the control socket for diagnosis; kept in memory only, gone with the worker.
+    log = deque(maxlen=200)
     lock = open(runtime_dir() / "active.lock", "a")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -325,6 +332,9 @@ def worker(name, timeout):
             "none",
             "--connect-timeout",
             str(timeout),
+            # Keep idle TCP sessions alive through NAT/firewalls; a server-pushed keepalive overrides it.
+            "--ping",
+            "10",
             "--verb",
             "3",
         ]
@@ -353,7 +363,8 @@ def worker(name, timeout):
                                 state["state"] = "STOPPING"
                                 deadline = time.monotonic() + 15
                                 publish()
-                            client.sendall(json.dumps(state).encode())
+                            reply = {**state, "log": list(log)} if command == b"log" else state
+                            client.sendall(json.dumps(reply).encode())
                         except (OSError, TimeoutError):
                             pass
                 elif key.data == "accept":
@@ -361,7 +372,9 @@ def worker(name, timeout):
                     management.settimeout(2)
                     selector.unregister(listener)
                     selector.register(management, selectors.EVENT_READ, "management")
-                    management.sendall(b"state on\nbytecount 2\nhold release\n")
+                    # The hold flag survives restarts and OpenVPN resets the release on each one: without
+                    # "hold off" every reconnect would wait forever for another "hold release".
+                    management.sendall(b"state on\nlog on\nbytecount 2\nhold off\nhold release\n")
                     if stopping:
                         management.sendall(b"signal SIGTERM\n")
                 else:
@@ -385,6 +398,11 @@ def worker(name, timeout):
                             received, _, sent = line[11:].partition(",")
                             if received.isdigit() and sent.isdigit():
                                 state["bytes_in"], state["bytes_out"] = int(received), int(sent)
+                        elif line.startswith(">LOG:"):
+                            stamp, _, rest = line[5:].partition(",")
+                            if stamp.isdigit():
+                                clock = time.strftime("%H:%M:%S", time.localtime(int(stamp)))
+                                log.append(f"{clock}  {rest.partition(',')[2]}")
                         elif line.startswith(">FATAL:"):
                             raise CredentialError("OpenVPN reported a fatal error; check config, TLS and permissions.")
                         elif line.startswith(">STATE:"):
