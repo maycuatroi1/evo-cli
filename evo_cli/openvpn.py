@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -128,10 +129,9 @@ def save_profile(name, data):
         os.umask(previous_umask)
 
 
-def validate_config(text):
-    """Validate without exposing private key material in errors; return endpoint metadata."""
+def _directives(text):
+    """Yield (line number, words) per directive; inline blocks are skipped, never parsed."""
     block = None
-    remotes = []
     for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if block:
@@ -149,6 +149,15 @@ def validate_config(text):
             words = shlex.split(line, comments=True)
         except ValueError:
             raise CredentialError(f"Invalid OpenVPN syntax at line {number}.") from None
+        yield number, words
+    if block:
+        raise CredentialError("Unclosed inline block in OpenVPN profile.")
+
+
+def validate_config(text):
+    """Validate without exposing private key material in errors; return endpoint metadata."""
+    remotes = []
+    for number, words in _directives(text):
         option = words[0].removeprefix("--")
         if option not in OPTIONS:
             raise CredentialError(
@@ -164,11 +173,93 @@ def validate_config(text):
             if len(words) not in (2, 3, 4):
                 raise CredentialError(f"Invalid remote at line {number}.")
             remotes.append(" ".join(words[1:]))
-    if block:
-        raise CredentialError("Unclosed inline block in OpenVPN profile.")
     if not remotes:
         raise CredentialError("No remote endpoint in OpenVPN profile.")
     return remotes
+
+
+def takes_default_route(text):
+    """Whether a profile may take the default route. Only split-tunnel profiles can run beside another VPN.
+
+    Split means route-nopull, or a pull-filter that ignores a pushed redirect-gateway; anything else might
+    receive one, so it counts as full-tunnel.
+    """
+    split, filtered = False, False
+    for _, words in _directives(text):
+        option = words[0].removeprefix("--")
+        if option == "redirect-gateway":
+            return True
+        if option == "route-nopull":
+            split = True
+        # OpenVPN applies only the first pull-filter whose text starts the pushed option.
+        elif option == "pull-filter" and not filtered and len(words) == 3 and words[2]:
+            filtered = "redirect-gateway".startswith(words[2])
+            split = split or (filtered and words[1] == "ignore")
+    return not split
+
+
+def default_gateway():
+    """The physical IPv4 gateway of the 0/0 route, which def1 VPN routes (0/1, 128/1) leave in place."""
+    if sys.platform == "darwin":
+        command, pattern = ["route", "-n", "get", "default"], r"gateway:\s*(\S+)[\s\S]*?interface:\s*(\S+)"
+    else:
+        command, pattern = ["ip", "-4", "route", "show", "default"], r"via\s+(\S+)\s+dev\s+(\S+)"
+    try:
+        output = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(pattern, output)
+    if not match or match.group(2).startswith(("tun", "utun")):
+        return None
+    try:
+        return str(ipaddress.IPv4Address(match.group(1)))
+    except ValueError:
+        return None
+
+
+def remote_addresses(remotes):
+    """IPv4 addresses of the profile's servers, resolved just before OpenVPN resolves them itself."""
+    addresses = []
+    for remote in remotes:
+        try:
+            infos = socket.getaddrinfo(remote.split()[0], None, socket.AF_INET)
+        except OSError:
+            continue
+        for *_, (address, _) in infos:
+            address = str(ipaddress.IPv4Address(address))
+            if address not in addresses:
+                addresses.append(address)
+    return addresses
+
+
+def pin_remotes(command, remotes):
+    """Wrap OpenVPN so the profile's servers stay on the physical gateway while it runs.
+
+    A split-tunnel profile adds no host route for its own server, so a full-tunnel VPN that is (or later comes)
+    up would carry this handshake inside itself and break it on either side's reconnect. The wrapper runs as
+    root with OpenVPN: pin each server, run OpenVPN, unpin after it exits. Addresses are validated IPs, so
+    they are safe to place in the script; the OpenVPN command is passed as arguments, never interpolated.
+    """
+    gateway, addresses = default_gateway(), remote_addresses(remotes)
+    if not gateway or not addresses:
+        return command
+    if sys.platform == "darwin":
+        pin = "route -n delete -host {0} >/dev/null 2>&1; route -n add -host {0} {1} >/dev/null"
+        unpin = "route -n delete -host {0} >/dev/null 2>&1"
+    else:
+        pin, unpin = "ip route replace {0}/32 via {1}", "ip route del {0}/32 via {1} 2>/dev/null"
+    script = "; ".join(
+        [
+            *(pin.format(address, gateway) for address in addresses),
+            # Survive the signals relayed by sudo so the unpin still runs; OpenVPN handles its own.
+            "trap : HUP INT TERM",
+            '"$@"',
+            "code=$?",
+            *(unpin.format(address, gateway) for address in addresses),
+            'exit "$code"',
+        ]
+    )
+    return ["sh", "-c", script, "sh", *command]
 
 
 def parse_totp(value):
@@ -341,8 +432,9 @@ def worker(name, timeout):
     state = {"profile": name, "state": "STARTING"}
     # Served over the control socket for diagnosis; kept in memory only, gone with the worker.
     log = deque(maxlen=200)
+    # One worker per profile; connect decides whether profiles may run side by side.
     # Held for the worker's whole life (flock) and closed in the outer finally.
-    lock = open(runtime_dir() / "active.lock", "a")  # noqa: SIM115
+    lock = open(str(base) + ".lock", "a")  # noqa: SIM115
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -357,7 +449,7 @@ def worker(name, timeout):
 
     try:
         profile = get_profile(name)
-        validate_config(profile["config"])
+        remotes = validate_config(profile["config"])
         private_write(config, profile["config"])
         for path, server in ((control_path, control), (management_path, listener)):
             Path(path).unlink(missing_ok=True)
@@ -398,6 +490,8 @@ def worker(name, timeout):
             "--verb",
             "3",
         ]
+        if not takes_default_route(profile["config"]):
+            command = pin_remotes(command, remotes)
         if os.geteuid() != 0:
             command = ["sudo", "-S", "-p", "", "--"] + command
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

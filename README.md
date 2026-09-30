@@ -137,8 +137,14 @@ supported. Only trusted, self-contained TUN client profiles are accepted; script
 plugins and external certificate/key files are refused. Runtime data uses
 `~/.evo/openvpn` (override with `EVO_OPENVPN_HOME`).
 
-Only one evo-managed tunnel runs at a time. Disconnect any GUI VPN before connecting
-through evo; GUI profiles are never removed or modified. Server routes are applied,
+Several evo-managed tunnels can run at once, as long as at most one of them may take the
+default route. A profile is split-tunnel when it has `route-nopull` or
+`pull-filter ignore "redirect-gateway"` (add `route` lines for the networks it should
+carry); any other profile might receive a pushed `redirect-gateway`, so `connect` refuses
+to stack two of those. While a split-tunnel profile runs, its server is pinned to the
+physical gateway with a host route, so a full-tunnel VPN connected before or after it
+never carries its handshake. Disconnect any GUI VPN before connecting through evo; GUI
+profiles are never removed or modified. Server routes are applied,
 but this backend does not change system DNS. Internal IP access works through the
 tunnel; private DNS names may need your organization's DNS configuration. `CONNECTED`
 confirms the tunnel, not the availability of a particular internal application.
