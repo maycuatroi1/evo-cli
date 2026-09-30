@@ -192,10 +192,9 @@ def takes_default_route(text):
         if option == "route-nopull":
             split = True
         # OpenVPN applies only the first pull-filter whose text starts the pushed option.
-        elif option == "pull-filter" and len(words) == 3 and words[2] and not filtered:
-            if "redirect-gateway".startswith(words[2]):
-                filtered = True
-                split = split or words[1] == "ignore"
+        elif option == "pull-filter" and not filtered and len(words) == 3 and words[2]:
+            filtered = "redirect-gateway".startswith(words[2])
+            split = split or (filtered and words[1] == "ignore")
     return not split
 
 
