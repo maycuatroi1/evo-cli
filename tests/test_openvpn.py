@@ -108,6 +108,91 @@ def test_config_accepts_inline_key_without_parsing_it():
     assert vpn.validate_config(CONFIG + "lport 0\n<key>\nPRIVATE SECRET\n</key>\n") == ["vpn.example 1194 udp"]
 
 
+@pytest.mark.parametrize(
+    "extra,full",
+    [
+        ("", True),
+        ('pull-filter ignore "redirect-gateway"\n', False),
+        ("pull-filter ignore redirect\n", False),
+        ("route-nopull\n", False),
+        ('pull-filter ignore "route"\n', True),
+        # The first matching pull-filter wins, and a local redirect-gateway needs no push.
+        ('pull-filter accept "redirect-gateway"\npull-filter ignore "redirect-gateway"\n', True),
+        ('pull-filter ignore "redirect-gateway"\nredirect-gateway def1\n', True),
+        ('<key>\nredirect-gateway def1\n</key>\npull-filter ignore "redirect-gateway"\n', False),
+    ],
+)
+def test_split_tunnel_is_only_what_provably_keeps_the_default_route(extra, full):
+    assert vpn.takes_default_route(CONFIG + extra) is full
+
+
+@pytest.mark.parametrize(
+    "platform,output,gateway",
+    [
+        ("darwin", "route to: default\n    gateway: 192.0.2.1\n  interface: en0\n", "192.0.2.1"),
+        ("darwin", "route to: default\n    gateway: 10.8.0.1\n  interface: utun4\n", None),
+        ("linux", "default via 192.0.2.1 dev wlan0 proto dhcp metric 600\n", "192.0.2.1"),
+        ("linux", "default via 10.8.0.1 dev tun0\n", None),
+        ("linux", "", None),
+    ],
+)
+def test_default_gateway_is_the_physical_one(monkeypatch, platform, output, gateway):
+    monkeypatch.setattr(vpn.sys, "platform", platform)
+    monkeypatch.setattr(vpn.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, output, ""))
+    assert vpn.default_gateway() == gateway
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the wrapper is a POSIX shell script")
+@pytest.mark.parametrize(
+    "platform,expected",
+    [
+        (
+            "darwin",
+            [
+                "route -n delete -host 198.51.100.7",
+                "route -n add -host 198.51.100.7 192.0.2.1",
+                "openvpn --config $(touch pwned)",
+                "route -n delete -host 198.51.100.7",
+            ],
+        ),
+        (
+            "linux",
+            [
+                "ip route replace 198.51.100.7/32 via 192.0.2.1",
+                "openvpn --config $(touch pwned)",
+                "ip route del 198.51.100.7/32 via 192.0.2.1",
+            ],
+        ),
+    ],
+)
+def test_split_tunnel_pins_its_server_around_openvpn(tmp_path, monkeypatch, platform, expected):
+    monkeypatch.setattr(vpn.sys, "platform", platform)
+    monkeypatch.setattr(vpn, "default_gateway", lambda: "192.0.2.1")
+    for tool in ("route", "ip"):
+        (tmp_path / tool).write_text(f'#!/bin/sh\necho "{tool} $*" >> "$LOG"\n')
+        (tmp_path / tool).chmod(0o755)
+    fake = "import os,sys; open(os.environ['LOG'],'a').write(' '.join(['openvpn',*sys.argv[1:]])+'\\n'); sys.exit(3)"
+    command = vpn.pin_remotes([sys.executable, "-c", fake, "--config", "$(touch pwned)"], ["198.51.100.7 1194 tcp4"])
+    log = tmp_path / "log"
+    env = {**vpn.os.environ, "PATH": f"{tmp_path}:{vpn.os.environ['PATH']}", "LOG": str(log)}
+    # OpenVPN's exit status survives the unpin, and its arguments never reach the shell as code.
+    assert subprocess.run(command, cwd=tmp_path, env=env, check=False).returncode == 3
+    assert log.read_text().splitlines() == expected
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_no_pin_without_a_physical_gateway_or_address(monkeypatch):
+    monkeypatch.setattr(vpn, "default_gateway", lambda: None)
+    assert vpn.pin_remotes(["openvpn"], ["198.51.100.7 1194"]) == ["openvpn"]
+    monkeypatch.setattr(vpn, "default_gateway", lambda: "192.0.2.1")
+
+    def unresolvable(*_):
+        raise vpn.socket.gaierror("no such host")
+
+    monkeypatch.setattr(vpn.socket, "getaddrinfo", unresolvable)
+    assert vpn.pin_remotes(["openvpn"], ["vpn.example 1194"]) == ["openvpn"]
+
+
 @pytest.mark.parametrize("name", ["../x", "x.y", "-flag", "x/y", "", "x" * 49])
 def test_rejects_ambiguous_profile_names(name):
     with pytest.raises(CredentialError):
@@ -282,6 +367,46 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
             except OSError:
                 pass
             thread.join(5)
+
+
+def test_worker_lock_is_per_profile(store, monkeypatch):
+    import fcntl
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("\n\n"))
+    with open(str(vpn.session_path("m1")) + ".lock", "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        vpn.worker("m1", 10)  # a second worker for a running profile leaves at once
+        assert not Path(str(vpn.session_path("m1")) + ".json").exists()
+        vpn.worker("m2", 10)  # another profile gets past the lock (and fails: it does not exist)
+        assert json.loads(Path(str(vpn.session_path("m2")) + ".json").read_text())["state"] == "FAILED"
+
+
+def test_connect_stacks_a_split_tunnel_beside_a_full_one_only(store, monkeypatch):
+    split = CONFIG + 'pull-filter ignore "redirect-gateway"\n'
+    for name, config in (("full", CONFIG), ("full-2", CONFIG), ("split", split)):
+        vpn.save_profile(name, {"config": config, "username": "u", "password": "p"})
+    monkeypatch.setattr(
+        vpn, "request", lambda name, command="status": {"state": "CONNECTED" if name == "full" else "STOPPED"}
+    )
+    monkeypatch.setattr("evo_cli.commands.openvpn.shutil.which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr("evo_cli.commands.openvpn.os.geteuid", lambda: 0)
+    started = []
+
+    class Exited:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+
+        def poll(self):
+            return 1
+
+    monkeypatch.setattr(
+        "evo_cli.commands.openvpn.subprocess.Popen", lambda command, **_: started.append(command) or Exited()
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ["openvpn", "connect", "full-2", "--no-watch"])
+    assert result.exit_code != 0 and "both may take the default route" in result.output and not started
+    result = runner.invoke(cli, ["openvpn", "connect", "split", "--no-watch"])
+    assert "default route" not in result.output and started, result.output
 
 
 def test_pick_profile_by_number_single_or_prompt(store, monkeypatch):

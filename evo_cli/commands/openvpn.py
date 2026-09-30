@@ -324,10 +324,17 @@ def connect(name, timeout, sudo_password_stdin, watch):
         raise click.ClickException("Missing credentials; run evo openvpn credentials PROFILE.")
     if _guard(vpn.request, name)["state"] != "STOPPED":
         raise click.ClickException("This profile already has a worker; use status or disconnect first.")
-    # Avoid unintentionally stacking two route sets. The external GUI is never controlled here.
-    for other in _guard(vpn.profiles):
-        if other != name and _guard(vpn.request, other)["state"] != "STOPPED":
-            raise click.ClickException(f"Disconnect '{other}' first to avoid conflicting VPN routes.")
+    # Two tunnels that may both take the default route would fight over it; a split-tunnel profile stacks
+    # beside any other. The external GUI is never controlled here.
+    full = _guard(vpn.takes_default_route, profile["config"])
+    for other, data in _guard(vpn.profiles).items():
+        if other == name or _guard(vpn.request, other)["state"] == "STOPPED":
+            continue
+        if full and _guard(vpn.takes_default_route, data.get("config", "")):
+            raise click.ClickException(
+                f"Disconnect '{other}' first: both may take the default route. To run them together, add "
+                'pull-filter ignore "redirect-gateway" (plus the routes you need) to one of them.'
+            )
     password = ""
     if os.geteuid() != 0:
         if sudo_password_stdin:
