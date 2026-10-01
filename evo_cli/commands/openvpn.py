@@ -294,12 +294,14 @@ def disconnect(name):
 
 def _disconnect(name):
     state = _guard(vpn.request, name, "disconnect")
+    if state["state"] == "STOPPED" and state.get("error"):
+        click.echo(f"{name} was not running; last error: {state['error']}", err=True)
     deadline = time.monotonic() + 20
     while state["state"] != "STOPPED" and time.monotonic() < deadline:
         time.sleep(0.2)
         state = _guard(vpn.request, name)
     if state["state"] != "STOPPED":
-        raise click.ClickException("Disconnect not confirmed; inspect evo openvpn status.")
+        raise click.ClickException(state.get("error") or "Disconnect not confirmed; inspect evo openvpn status.")
     click.echo(f"{name}: stopped (OpenVPN Connect profiles unchanged).")
 
 

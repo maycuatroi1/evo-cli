@@ -258,10 +258,51 @@ def test_plain_password_escaping_and_no_unrequested_otp():
         vpn.quote("x\nsignal SIGTERM")
 
 
-def test_stale_state_is_not_connected_or_confirmed_stopped(store):
-    path = Path(str(vpn.session_path("m1")) + ".json")
-    vpn.private_write(path, '{"state":"CONNECTED"}')
+def _ps(monkeypatch, output):
+    def run(command, **kwargs):
+        assert command[0] == "ps"
+        if output is None:
+            raise OSError("no ps")
+        return subprocess.CompletedProcess(command, 0, stdout=output)
+
+    monkeypatch.setattr(vpn.subprocess, "run", run)
+
+
+def test_stale_state_is_not_connected_or_confirmed_stopped(store, monkeypatch):
+    import fcntl
+
+    base = str(vpn.session_path("m1"))
+    vpn.private_write(Path(base + ".json"), '{"state":"CONNECTED"}')
+    _ps(monkeypatch, "")
+    with open(base + ".lock", "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert vpn.request("m1")["state"] == "UNKNOWN"  # the worker lives but does not answer
+    _ps(monkeypatch, None)
     assert vpn.request("m1")["state"] == "UNKNOWN"
+    _ps(monkeypatch, f"  4242 /usr/sbin/openvpn --config {base}.ovpn --verb 3\n  4300 -zsh\n")
+    state = vpn.request("m1")
+    assert state["state"] == "UNKNOWN" and state["error"].endswith("sudo kill 4242")
+
+
+def test_dead_worker_is_reaped_and_disconnect_confirms_it(store, monkeypatch):
+    import socket
+
+    vpn.save_profile("m1", {"config": CONFIG})
+    base = str(vpn.session_path("m1"))
+    vpn.private_write(Path(base + ".json"), '{"profile":"m1","state":"CONNECTED","vpn_ip":"10.8.0.2"}')
+    # What a SIGKILLed worker leaves: a socket nobody listens on, the management socket and the config.
+    with socket.socket(socket.AF_UNIX) as stale:
+        stale.bind(base + ".sock")
+    for suffix in (".mgmt", ".ovpn", ".lock"):
+        Path(base + suffix).touch()
+    _ps(monkeypatch, "  4300 -zsh\n")
+    result = CliRunner().invoke(cli, ["openvpn", "disconnect", "m1"])
+    assert result.exit_code == 0, result.output
+    assert "m1 was not running; last error: Worker exited unexpectedly (last state CONNECTED)" in result.output
+    assert "m1: stopped" in result.output
+    assert not any(Path(base + suffix).exists() for suffix in (".sock", ".mgmt", ".ovpn"))
+    assert json.loads(Path(base + ".json").read_text())["state"] == "STOPPED"
+    assert vpn.request("m1")["state"] == "STOPPED"  # so connect and import accept the profile again
 
 
 FAKE_OPENVPN = """

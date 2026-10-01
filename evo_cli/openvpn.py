@@ -366,6 +366,58 @@ def last_profile():
         return None
 
 
+def _worker_alive(base):
+    """The worker holds its lock for life, and the kernel releases it however the worker dies."""
+    import fcntl
+
+    try:
+        with open(str(base) + ".lock") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except FileNotFoundError:
+        return False
+    except BlockingIOError:
+        return True
+    return False
+
+
+def _config_pids(base):
+    """PIDs whose command line names this session's config (OpenVPN, its sudo or wrapper); None if unknown."""
+    config = str(base) + ".ovpn"
+    try:
+        output = subprocess.run(
+            ["ps", "-A", "-o", "pid=", "-o", "args="], capture_output=True, text=True, timeout=5, check=True
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return [line.split(None, 1)[0] for line in output.splitlines() if config in line]
+
+
+def _reap(name, last):
+    """Finish the cleanup of a worker that died without it (SIGKILL, SIGTERM), once nothing of it runs.
+
+    Otherwise its last published state would read as UNKNOWN forever, blocking connect and disconnect.
+    """
+    base = session_path(name)
+    if _worker_alive(base):
+        return {"profile": name, "state": "UNKNOWN", "error": "Worker unavailable; inspect OpenVPN processes."}
+    pids = _config_pids(base)
+    if pids is None:
+        return {"profile": name, "state": "UNKNOWN", "error": "Worker gone; cannot list processes to confirm."}
+    if pids:
+        listed = " ".join(pids)
+        error = f"OpenVPN still runs without its worker (PID {listed}); stop it with: sudo kill {listed}"
+        return {"profile": name, "state": "UNKNOWN", "error": error}
+    for suffix in (".sock", ".mgmt", ".ovpn"):
+        Path(str(base) + suffix).unlink(missing_ok=True)
+    state = {
+        "profile": name,
+        "state": "STOPPED",
+        "error": f"Worker exited unexpectedly (last state {last['state']}); no OpenVPN process was left running.",
+    }
+    private_write(Path(str(base) + ".json"), json.dumps(state))
+    return state
+
+
 def request(name, command="status"):
     endpoint = str(session_path(name)) + ".sock"
     with socket.socket(socket.AF_UNIX) as client:
@@ -377,11 +429,7 @@ def request(name, command="status"):
             if path.exists():
                 last = json.loads(path.read_text())
                 if last["state"] not in ("FAILED", "STOPPED") or last.get("cleanup_failed"):
-                    return {
-                        "profile": name,
-                        "state": "UNKNOWN",
-                        "error": "Worker unavailable; inspect OpenVPN processes.",
-                    }
+                    return _reap(name, last)
                 if last.get("error"):
                     return {"profile": name, "state": "STOPPED", "error": last["error"]}
             return {"profile": name, "state": "STOPPED"}
