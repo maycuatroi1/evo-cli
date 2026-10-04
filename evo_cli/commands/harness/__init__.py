@@ -21,9 +21,13 @@ def harness_group():
     evo harness show <plan>        read one plan
     evo harness graph <plan>       print a DAG as an adjacency list
     evo harness check <plan>       check what the plan claims against real git
-    evo harness step <plan> 3 done mark a step
+    evo harness step <plan> 3 done mark a step (--evidence and --note append)
     evo harness clone              clone every declared repo into its declared path
     evo harness pull               fast-forward every repo
+
+    When harness.yaml has hub.project, plans live on the evo-agents hub: step, debt, question,
+    repo and the dashboard write through `evo-agents hub plan`, and check reports copies whose
+    digest no longer matches.
     """
 
 

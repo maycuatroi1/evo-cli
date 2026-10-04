@@ -3,9 +3,11 @@ from __future__ import annotations
 import time
 
 import rich_click as click
+from rich.markup import escape
 
 from evo_cli.commands.harness._dag import plan_repo_graph, plan_step_graph, seam_graph
 from evo_cli.commands.harness._git import overlay
+from evo_cli.commands.harness._mirror import INTACT, copies, hub_project
 from evo_cli.commands.harness._model import find_plan, load_plans
 from evo_cli.commands.harness._paths import find_manifest, harness_option
 from evo_cli.commands.harness._render import LEVEL_MARK, LEVEL_STYLE, fail_if, print_warnings
@@ -52,6 +54,22 @@ def _report(manifest_path, plan_id: str, fetch: bool) -> int:
     return result["errors"] + graph_problems
 
 
+def _mirror_report(manifest_path) -> int:
+    """In a harness whose plans live on the hub, every plan file must be a copy the hub wrote: same
+    project, and a digest that matches what the file holds now. The number of files that are not."""
+    project = hub_project(manifest_path)
+    if project is None:
+        return 0
+    found = copies(manifest_path, project)
+    bad = [c for c in found if c.state != INTACT]
+    console.print(f"\n[bold]plan copies[/] [dim]- hub project {escape(project)}, {len(found)} files[/]")
+    if bad:
+        print_warnings([{"level": "error", "text": escape(c.message)} for c in bad])
+    else:
+        console.print("  [green]OK   [/] Every plan file is a copy the hub wrote, and every digest matches.")
+    return len(bad)
+
+
 @click.command("check", help="Check what a plan claims against the real git state and its DAGs.")
 @harness_option
 @click.argument("plan_id", required=False)
@@ -61,7 +79,8 @@ def _report(manifest_path, plan_id: str, fetch: bool) -> int:
 def check(harness_path, plan_id, check_all, fetch, seams):
     """Catch the ways a plan lies: a branch marked merged that is not in its base, a
     `pushed: true` with no remote branch, a commit named in the plan that does not exist,
-    a declared merge order that contradicts depends_on."""
+    a declared merge order that contradicts depends_on. In a harness with hub.project, also a plan
+    copy that was edited outside the hub (its digest no longer matches)."""
     manifest_path = find_manifest(harness_path)
     if not plan_id and not check_all and not seams:
         raise click.ClickException("Pass a PLAN_ID or --all.")
@@ -78,6 +97,8 @@ def check(harness_path, plan_id, check_all, fetch, seams):
         else:
             console.print("  [green]OK   [/] Seam graph is acyclic and every seam declares a verify command.")
         errors += sum(1 for w in problems if w["level"] == "error")
+
+    errors += _mirror_report(manifest_path)
 
     if plan_id or check_all:
         targets = [p.id for p in load_plans(manifest_path, "active")] if check_all else [plan_id]

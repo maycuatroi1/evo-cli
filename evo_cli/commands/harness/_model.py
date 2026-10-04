@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,6 +82,34 @@ def _title_of(section: str, item: dict) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return str(item.get("what") or "?")
+
+
+def join_text(existing: Any, addition: str, where: str) -> Any:
+    """`existing` with `addition` on a line of its own after it, as `--note` and `--evidence` add text.
+
+    What was there is never dropped. When `existing` already ends with that line it comes back
+    unchanged, so running the same command again (or retrying a write that did land) adds nothing.
+    """
+    addition = addition.strip()
+    if not addition:
+        return existing
+    if existing is None or (isinstance(existing, str) and not existing.strip()):
+        return addition
+    if isinstance(existing, (dict, list)):
+        kind = "a mapping" if isinstance(existing, dict) else "a list"
+        raise click.ClickException(
+            f"{where} holds {kind}, not text, so nothing can be appended to it. Turn it into text first."
+        )
+    if isinstance(existing, bool):
+        text = "true" if existing else "false"
+    elif isinstance(existing, (_dt.date, _dt.datetime)):
+        text = existing.isoformat()
+    else:
+        text = str(existing)
+    text = text.rstrip()
+    if text == addition or text.endswith("\n" + addition):
+        return existing
+    return text + "\n" + addition
 
 
 def plain(value: Any) -> Any:

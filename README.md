@@ -405,11 +405,33 @@ it with a YAML dumper would destroy the formatting. Writes go through the CLI, w
 line it needs and refuses to save if the reparsed file is not exactly the intended change:
 
 ```bash
-evo harness step <plan> 3 done --note "..."   # keyed by the step's `id` (or `order`)
+evo harness step <plan> 3 done --evidence "repo@sha: tests pass" --note "..."   # keyed by the step's `id` (or `order`)
 evo harness debt <plan> 0 fixed
 evo harness question <plan> 1 answered
 evo harness repo <plan> 2 merged
 ```
+
+`--note` and `--evidence` append their text on a line of its own; an existing note or evidence is
+kept, and the same text is not added twice.
+
+### Plans on the evo-agents hub
+
+When `harness.yaml` has `hub: {project: P}`, the plans live on the evo-agents hub and every
+`plans/<area>/<plan>.yaml` is a read-only copy the hub wrote. `step`, `debt`, `question`, `repo` and
+the dashboard's complete button then never edit those files: they run `evo-agents hub plan patch`
+(or `complete`) with `--if-revision`, and `evo-agents hub plan export` writes the copies back. When
+someone else changed the plan in between, the write is retried on the new revision: appended text
+lands after theirs, and a status they changed to something else stops the command instead of being
+overwritten. A copy edited by hand stops every write before the hub hears of it, and
+`evo harness check` reports it (digest mismatch), with the same fix `evo-agents harness validate`
+prints. These commands need evo-agents 0.2.0 or later, signed in:
+
+```bash
+uv tool install 'evo-ak[graphify]>=0.2.0'
+evo-agents hub login --url https://agents.omelet.tech
+```
+
+Without it, or when the hub cannot be reached, the command fails with that advice and no file changes.
 
 The server is stdlib `http.server`, so `serve` needs no dependency beyond what `pip install evo_cli`
 already brings.
