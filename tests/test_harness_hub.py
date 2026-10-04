@@ -47,8 +47,12 @@ def today() -> str:
 
 
 def flat(text: str) -> str:
-    """Output with rich's panel borders and line wrapping taken out, for substring checks."""
-    return " ".join(re.sub(r"[─-╿]", " ", text).split())
+    """Output with rich's colours, panel borders and line wrapping taken out, for substring checks.
+
+    CI sets variables that make rich colour its output even under CliRunner, so the escape codes go first.
+    """
+    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+    return " ".join(re.sub(r"[─-╿]", " ", plain).split())
 
 
 # The hub's CLI contract
