@@ -1,0 +1,287 @@
+{
+  "source": "evo-agents 0.2.0, evo-agents hub contract print, trimmed to the commands evo-cli calls",
+  "version": 1,
+  "commands": {
+    "hub login": {
+      "positionals": [],
+      "options": [
+        {
+          "flags": [
+            "--url"
+          ],
+          "value": "string",
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json": null
+    },
+    "hub plan complete": {
+      "positionals": [
+        {
+          "name": "plan",
+          "metavar": "PLAN",
+          "value": "string",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "options": [
+        {
+          "flags": [
+            "--if-revision"
+          ],
+          "value": "integer",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--project"
+          ],
+          "value": "string",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--json"
+          ],
+          "value": null,
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json": {
+        "kind": "object",
+        "keys": [
+          "project",
+          "plan_id",
+          "area",
+          "revision",
+          "digest",
+          "label",
+          "body",
+          "created_at",
+          "updated_at",
+          "updated_by",
+          "created",
+          "changed",
+          "warnings"
+        ],
+        "schema": "evo_agents__hub__server__plans__Written"
+      }
+    },
+    "hub plan export": {
+      "positionals": [
+        {
+          "name": "root",
+          "metavar": "HARNESS_ROOT",
+          "value": "string",
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "options": [
+        {
+          "flags": [
+            "--commit"
+          ],
+          "value": null,
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--project"
+          ],
+          "value": "string",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--json"
+          ],
+          "value": null,
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json": {
+        "kind": "object",
+        "keys": [
+          "root",
+          "project",
+          "plans",
+          "removed",
+          "notes",
+          "commit"
+        ]
+      }
+    },
+    "hub plan patch": {
+      "positionals": [
+        {
+          "name": "plan",
+          "metavar": "PLAN",
+          "value": "string",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "options": [
+        {
+          "flags": [
+            "--section"
+          ],
+          "value": "string",
+          "required": false,
+          "repeatable": false,
+          "choices": [
+            "steps",
+            "repos",
+            "tech_debt",
+            "open_questions"
+          ]
+        },
+        {
+          "flags": [
+            "--index"
+          ],
+          "value": "integer",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--step"
+          ],
+          "value": "string",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--set"
+          ],
+          "value": "string",
+          "required": true,
+          "repeatable": true
+        },
+        {
+          "flags": [
+            "--if-revision"
+          ],
+          "value": "integer",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--project"
+          ],
+          "value": "string",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--json"
+          ],
+          "value": null,
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json": {
+        "kind": "object",
+        "keys": [
+          "project",
+          "plan_id",
+          "area",
+          "revision",
+          "digest",
+          "label",
+          "body",
+          "created_at",
+          "updated_at",
+          "updated_by",
+          "created",
+          "changed",
+          "warnings"
+        ],
+        "schema": "evo_agents__hub__server__plans__Written"
+      }
+    },
+    "hub plan show": {
+      "positionals": [
+        {
+          "name": "plan",
+          "metavar": "PLAN",
+          "value": "string",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "options": [
+        {
+          "flags": [
+            "--revision"
+          ],
+          "value": "integer",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--project"
+          ],
+          "value": "string",
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "flags": [
+            "--json"
+          ],
+          "value": null,
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json": {
+        "kind": "object",
+        "keys": [
+          "project",
+          "plan_id",
+          "area",
+          "revision",
+          "digest",
+          "label",
+          "body",
+          "created_at",
+          "updated_at",
+          "updated_by"
+        ],
+        "schema": "Plan",
+        "with": {
+          "--revision": {
+            "kind": "object",
+            "keys": [
+              "revision",
+              "area",
+              "digest",
+              "summary",
+              "actor",
+              "created_at",
+              "label",
+              "body"
+            ],
+            "schema": "RevisionBody"
+          }
+        }
+      }
+    }
+  }
+}

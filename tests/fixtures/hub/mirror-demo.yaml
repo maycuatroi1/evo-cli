@@ -1,0 +1,53 @@
+# Mirror of evo-agents hub plan mirror-demo, revision 7. Do not edit; use evo harness step or evo-agents hub plan.
+id: mirror-demo
+title: Bản sao kiểm digest
+goal: >-
+  A plan the hub keeps, written here exactly as evo-agents hub plan export writes it, so evo-cli can check that
+  it computes the same digest as the hub.
+created_at: '2026-10-04'
+repos:
+  - repo: alpha
+    branch: main
+    status: pending
+steps:
+  - id: 1
+    title: Đọc kế hoạch
+    repo: alpha
+    what: Read the plan.
+    depends_on: []
+    status: done
+    done_at: '2026-10-04'
+    evidence: 'alpha@abc1234: 12 passed'
+  - id: 2
+    title: Ghi chú nhiều dòng
+    repo: alpha
+    what: Keep a note that spans lines.
+    depends_on: [1]
+    status: in_progress
+    note: |
+      First line of the note.
+      Second line: "quoted" and 'single'.
+  - id: 3
+    repo: alpha
+    what: >-
+      A step with a long sentence that the copy folds because it is longer than one hundred characters, with tiếng
+      Việt có dấu đầy đủ.
+    depends_on: [2]
+    status: pending
+    blocking: true
+seams_touched:
+  - name: hub-plan-mirror-v1
+    owner: evo-agents
+    consumers: [evo-cli]
+    verify: python -m pytest -q tests/test_harness_hub.py -k mirror
+decisions: [Plain string decision]
+tech_debt:
+  - issue: One open item
+    status: open
+open_questions:
+  - issue: Is this a question?
+    status: open
+hub:
+  project: demo
+  revision: 7
+  digest: sha256:19e5a9b75daecc3c5110371629aafae10d0de2c2087a72e3670570402ad18aad

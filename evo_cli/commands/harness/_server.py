@@ -169,7 +169,7 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[:2] == ["api", "plans"] and parts[3] == "complete":
             try:
                 plan = find_plan(self.manifest_path, parts[2])
-                completed = complete_plan(plan)
+                completed = complete_plan(plan, self.manifest_path)
             except click.ClickException as exc:
                 self._json({"error": exc.format_message()}, status=409)
                 return

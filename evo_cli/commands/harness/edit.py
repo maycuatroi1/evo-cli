@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import rich_click as click
+from rich.markup import escape
 
 from evo_cli.commands.harness._dag import step_key
 from evo_cli.commands.harness._model import find_plan, step_title, tone_of
@@ -18,6 +19,7 @@ QUESTION_STATUS = ["answered", "open"]
 REPO_STATUS = ["merged", "done", "in_progress", "pending", "not-needed"]
 
 DATE_KEY = {"done": "done_at", "fixed": "fixed_at", "answered": "answered_at", "merged": "merged_at"}
+NOTE_HELP = "Append a note, on a line of its own. An existing note is kept."
 NEXT_STATUS = {"pending": "in_progress", "blocked": "in_progress", "in_progress": "done", "done": "done"}
 
 
@@ -25,7 +27,7 @@ def _today() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
-def _write(manifest_path, plan_id, section, index, status, note, no_date):
+def _write(manifest_path, plan_id, section, index, status, note, no_date, evidence=None):
     item = find_plan(manifest_path, plan_id)
     entries = item.items(section)
     if index < 0 or index >= len(entries):
@@ -35,19 +37,25 @@ def _write(manifest_path, plan_id, section, index, status, note, no_date):
     date_key = DATE_KEY.get(status)
     if date_key and not no_date:
         updates[date_key] = _today()
-    if note:
-        updates["note"] = note
+    append = {key: value for key, value in (("note", note), ("evidence", evidence)) if value}
 
-    result = update_item(item.path, section, index, updates)
+    result = update_item(item.path, section, index, updates, append=append, manifest_path=manifest_path)
     label = step_title(entries[index], 100) or str(entries[index].get("repo") or "?")
+    where = f" [dim](hub {escape(result['hub'])}, revision {result['revision']})[/]" if result["hub"] else ""
     console.print(
-        f"[green]DONE[/]  {item.id} / {section}[{index}]: [dim]{result['old'].get('status')}[/] -> [bold]{status}[/]"
+        f"[green]DONE[/]  {item.id} / {section}[{index}]: [dim]{result['old'].get('status')}[/] -> "
+        f"[bold]{status}[/]{where}"
     )
-    console.print(f"      {label}")
-    for key, value in updates.items():
+    console.print(f"      {escape(label)}")
+    for key, value in result["new"].items():
         if key != "status":
-            console.print(f"      [dim]{key}: {value}[/]")
-    console.print(f"      [dim]{item.path}[/]")
+            shown = escape(str(value)).replace("\n", "\n" + " " * (8 + len(key)))
+            console.print(f"      [dim]{key}: {shown}[/]")
+    if not result.get("changed", True):
+        console.print("      [dim]already held all of that; nothing changed[/]")
+    console.print(f"      [dim]{escape(str(result['path']))}[/]")
+    for text in result.get("notes") or []:
+        console.print(f"      [yellow]note:[/] {escape(text)}")
 
 
 def _resolve_step(item, key) -> int:
@@ -103,11 +111,19 @@ def _pick(item, key, status):
 @click.argument("plan_id")
 @click.argument("key", required=False)
 @click.argument("status", type=click.Choice(STEP_STATUS), required=False)
-@click.option("--note", help="Append a note to the step.")
+@click.option("--note", help=NOTE_HELP)
+@click.option(
+    "--evidence",
+    help="Append evidence to the step, such as repo@sha and the test run that passed, on a line of its own. "
+    "Existing evidence is kept.",
+)
 @click.option("--no-date", is_flag=True, help="Do not add done_at.")
 @click.option("--no-input", is_flag=True, help="Print the board and stop. For scripts and CI.")
-def step(harness_path, plan_id, key, status, note, no_date, no_input):
-    """KEY is the step's `id` (or `order` in older plans), the same number depends_on quotes."""
+def step(harness_path, plan_id, key, status, note, evidence, no_date, no_input):
+    """KEY is the step's `id` (or `order` in older plans), the same number depends_on quotes.
+
+    In a harness whose harness.yaml has hub.project, the plan lives on the evo-agents hub: the change
+    goes through `evo-agents hub plan patch` and `evo-agents hub plan export` rewrites the copy."""
     manifest_path = find_manifest(harness_path)
     item = find_plan(manifest_path, plan_id)
 
@@ -122,7 +138,7 @@ def step(harness_path, plan_id, key, status, note, no_date, no_input):
         if key is None or status is None:
             return
 
-    _write(manifest_path, plan_id, "steps", _resolve_step(item, key), status, note, no_date)
+    _write(manifest_path, plan_id, "steps", _resolve_step(item, key), status, note, no_date, evidence)
     console.print()
     step_board(find_plan(manifest_path, plan_id), highlight=key)
 
@@ -132,7 +148,7 @@ def step(harness_path, plan_id, key, status, note, no_date, no_input):
 @click.argument("plan_id")
 @click.argument("index", type=int)
 @click.argument("status", type=click.Choice(DEBT_STATUS))
-@click.option("--note", help="Append a note.")
+@click.option("--note", help=NOTE_HELP)
 @click.option("--no-date", is_flag=True, help="Do not add fixed_at.")
 def debt(harness_path, plan_id, index, status, note, no_date):
     _write(find_manifest(harness_path), plan_id, "tech_debt", index, status, note, no_date)
@@ -143,7 +159,7 @@ def debt(harness_path, plan_id, index, status, note, no_date):
 @click.argument("plan_id")
 @click.argument("index", type=int)
 @click.argument("status", type=click.Choice(QUESTION_STATUS))
-@click.option("--note", help="Write the answer into note.")
+@click.option("--note", help="Append the answer to the item's note, on a line of its own. An existing note is kept.")
 @click.option("--no-date", is_flag=True, help="Do not add answered_at.")
 def question(harness_path, plan_id, index, status, note, no_date):
     _write(find_manifest(harness_path), plan_id, "open_questions", index, status, note, no_date)
@@ -154,7 +170,7 @@ def question(harness_path, plan_id, index, status, note, no_date):
 @click.argument("plan_id")
 @click.argument("index", type=int)
 @click.argument("status", type=click.Choice(REPO_STATUS))
-@click.option("--note", help="Append a note.")
+@click.option("--note", help=NOTE_HELP)
 @click.option("--no-date", is_flag=True, help="Do not add merged_at.")
 def repo(harness_path, plan_id, index, status, note, no_date):
     _write(find_manifest(harness_path), plan_id, "repos", index, status, note, no_date)
