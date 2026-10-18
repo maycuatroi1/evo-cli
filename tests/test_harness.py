@@ -337,3 +337,12 @@ def test_find_plan_refuses_to_walk_out_of_the_plans_directory(tmp_path):
     for probe in ("../secret", "..\\secret", "../../harness"):
         with pytest.raises(click.ClickException):
             find_plan(manifest, probe)
+
+
+def test_descoped_step_counts_as_closed():
+    from evo_cli.commands.harness._model import tone_of
+    from evo_cli.commands.harness.edit import DATE_KEY, STEP_STATUS
+
+    assert tone_of("steps", "descoped") == "ok"
+    assert "descoped" in STEP_STATUS
+    assert DATE_KEY["descoped"] == "descoped_at"

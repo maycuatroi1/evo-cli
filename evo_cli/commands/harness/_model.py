@@ -15,7 +15,7 @@ SECTIONS = ("references", "repos", "steps", "decisions", "tech_debt", "open_ques
 AREAS = ("active", "completed")
 
 TITLE_KEYS = ("what", "issue", "repo", "order")
-DONE_WORDS = {"done", "merged", "fixed", "verified", "answered", "closed", "resolved", "not-needed"}
+DONE_WORDS = {"done", "merged", "fixed", "verified", "answered", "closed", "resolved", "not-needed", "descoped"}
 ACTIVE_WORDS = {"in_progress", "wip", "doing", "review"}
 BLOCKED_WORDS = {"blocked", "stuck"}
 WARN_WORDS = {"open", "unknown", "todo", "pending"}
