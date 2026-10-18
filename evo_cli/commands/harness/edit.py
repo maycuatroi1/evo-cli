@@ -18,9 +18,21 @@ DEBT_STATUS = ["fixed", "open"]
 QUESTION_STATUS = ["answered", "open"]
 REPO_STATUS = ["merged", "done", "in_progress", "pending", "not-needed"]
 
-DATE_KEY = {"done": "done_at", "descoped": "descoped_at", "fixed": "fixed_at", "answered": "answered_at", "merged": "merged_at"}
+DATE_KEY = {
+    "done": "done_at",
+    "descoped": "descoped_at",
+    "fixed": "fixed_at",
+    "answered": "answered_at",
+    "merged": "merged_at",
+}
 NOTE_HELP = "Append a note, on a line of its own. An existing note is kept."
-NEXT_STATUS = {"pending": "in_progress", "blocked": "in_progress", "in_progress": "done", "done": "done", "descoped": "descoped"}
+NEXT_STATUS = {
+    "pending": "in_progress",
+    "blocked": "in_progress",
+    "in_progress": "done",
+    "done": "done",
+    "descoped": "descoped",
+}
 
 
 def _today() -> str:

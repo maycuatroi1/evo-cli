@@ -37,7 +37,9 @@ def plans(harness_path, area):
         )
         grid.add_row(
             f"[bold]{item.id}[/]",
-            item.area if item.raw.get("status") not in ("abandoned", "superseded") else f"{item.area} [yellow]({item.raw['status']})[/]",
+            item.area
+            if item.raw.get("status") not in ("abandoned", "superseded")
+            else f"{item.area} [yellow]({item.raw['status']})[/]",
             f"{p['steps_done']}/{p['steps_total']}",
             f"{bar(p['steps_done'], p['steps_total'])} {p['pct']:>3}%",
             f"{p['repos_done']}/{p['repos_total']}",
