@@ -31,6 +31,40 @@ def one_line(value: object, width: int) -> str:
     return text if len(text) <= width else text[: max(1, width - 3)] + "..."
 
 
+def as_text(value: object) -> str:
+    """A plan value the way YAML spells it: booleans as true/false, lists joined, nothing as `-`."""
+    if value is None or value == "" or value == []:
+        return "-"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(as_text(v) for v in value)
+    return str(value)
+
+
+def key_runs(keys: list[str]) -> str:
+    """Step keys in written order, with a run of three or more consecutive integers shown as `first-last`."""
+    parts: list[str] = []
+    run: list[int] = []
+
+    def flush() -> None:
+        parts.extend([f"{run[0]}-{run[-1]}"] if len(run) >= 3 else [str(n) for n in run])
+        run.clear()
+
+    for key in keys:
+        number = int(key) if key.isascii() and key.isdigit() and str(int(key)) == key else None
+        if number is not None and run and number == run[-1] + 1:
+            run.append(number)
+            continue
+        flush()
+        if number is None:
+            parts.append(key)
+        else:
+            run.append(number)
+    flush()
+    return ", ".join(parts) or "-"
+
+
 def title_width(reserved: int = 26) -> int:
     return max(28, min(console.width, 140) - reserved)
 

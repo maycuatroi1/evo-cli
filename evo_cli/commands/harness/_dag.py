@@ -3,6 +3,8 @@ from __future__ import annotations
 import itertools
 from pathlib import Path
 
+import rich_click as click
+
 from evo_cli.commands.harness._model import Plan, cluster, load_seams, step_title, tone_of
 
 CLUSTER_REPO = "__cluster__"
@@ -285,12 +287,33 @@ def step_key(entry: dict, index: int) -> str:
     return str(index)
 
 
+def resolve_step(plan: Plan, key) -> int:
+    """Index of the step whose key is KEY. An unknown key fails with every key the plan holds."""
+    entries = plan.items("steps")
+    wanted = str(key)
+    for index, entry in enumerate(entries):
+        if step_key(entry, index) == wanted:
+            return index
+    known = ", ".join(step_key(e, i) for i, e in enumerate(entries)) or "(the plan has no steps)"
+    raise click.ClickException(f"No step {wanted!r} in {plan.id}. Available: {known}")
+
+
 def _as_list(value) -> list:
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
         return list(value)
     return [value]
+
+
+def step_depends(entry: dict) -> list[str]:
+    """Keys of the steps this one waits on, in written order, from every spelling the step graph reads."""
+    found: list[str] = []
+    for name in FORWARD_KEYS:
+        for raw in _as_list(entry.get(name)):
+            if str(raw) not in found:
+                found.append(str(raw))
+    return found
 
 
 def plan_step_graph(plan: Plan) -> dict:

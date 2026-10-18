@@ -382,7 +382,9 @@ evo harness serve      # dashboard on http://127.0.0.1:8788
 evo harness repos      # repos in the manifest, with branch and dirty state
 evo harness seams      # contract seams; --graph for the owner -> consumer DAG
 evo harness plans      # progress across every exec-plan
-evo harness show <plan>
+evo harness show <plan>                 # every section, open questions with status and blocking
+evo harness show <plan> --step 3        # one step in full: what, verify, note, acceptance, evidence
+evo harness step <plan> --no-input      # the step board: repo, status, depends_on, title
 evo harness check <plan> [--fetch]      # what the plan claims vs what git says
 evo harness graph <plan>:steps          # the same DAG as an adjacency list
 evo harness clone      # clone every declared repo into its declared path

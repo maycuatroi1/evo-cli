@@ -5,7 +5,7 @@ from datetime import datetime
 import rich_click as click
 from rich.markup import escape
 
-from evo_cli.commands.harness._dag import step_key
+from evo_cli.commands.harness._dag import resolve_step, step_key
 from evo_cli.commands.harness._model import find_plan, step_title, tone_of
 from evo_cli.commands.harness._mutate import update_item
 from evo_cli.commands.harness._paths import find_manifest, harness_option
@@ -70,16 +70,6 @@ def _write(manifest_path, plan_id, section, index, status, note, no_date, eviden
         console.print(f"      [yellow]note:[/] {escape(text)}")
 
 
-def _resolve_step(item, key) -> int:
-    entries = item.items("steps")
-    wanted = str(key)
-    for index, entry in enumerate(entries):
-        if step_key(entry, index) == wanted:
-            return index
-    known = ", ".join(step_key(e, i) for i, e in enumerate(entries))
-    raise click.ClickException(f"No step {wanted!r} in {item.id}. Available: {known}")
-
-
 def _pick(item, key, status):
     """Interactive picker, but only when questionary is installed and we own a real terminal."""
     try:
@@ -104,7 +94,7 @@ def _pick(item, key, status):
             raise click.Abort()
 
     if status is None:
-        index = _resolve_step(item, key)
+        index = resolve_step(item, key)
         current = str(entries[index].get("status") or "")
         suggested = NEXT_STATUS.get(current, STEP_STATUS[0])
         status = questionary.select(
@@ -150,7 +140,7 @@ def step(harness_path, plan_id, key, status, note, evidence, no_date, no_input):
         if key is None or status is None:
             return
 
-    _write(manifest_path, plan_id, "steps", _resolve_step(item, key), status, note, no_date, evidence)
+    _write(manifest_path, plan_id, "steps", resolve_step(item, key), status, note, no_date, evidence)
     console.print()
     step_board(find_plan(manifest_path, plan_id), highlight=key)
 
