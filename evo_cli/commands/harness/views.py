@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import rich_click as click
 
-from evo_cli.commands.harness._dag import plan_repo_graph, plan_step_graph, seam_graph, step_key
+from evo_cli.commands.harness._dag import plan_repo_graph, plan_step_graph, seam_graph, step_depends, step_key
 from evo_cli.commands.harness._model import cluster, find_plan, load_plans, load_seams, step_title, tone_of
 from evo_cli.commands.harness._paths import find_manifest, git, harness_option
 from evo_cli.commands.harness._render import (
     TONE_STYLE,
     bar,
+    key_runs,
     one_line,
     print_graph,
     print_warnings,
@@ -144,18 +145,21 @@ def step_board(item, highlight=None) -> None:
         console.print("[dim]  This plan has no steps yet.[/]")
         return
 
-    width = title_width()
-    grid = table("", "#", "REPO", "STATUS", "STEP")
+    width = title_width(reserved=38)
+    grid = table("", "#", "REPO", "STATUS", "DEPENDS ON", "STEP")
     for index, entry in enumerate(steps):
         status = entry.get("status")
         style = TONE_STYLE[tone_of("steps", status)]
         key = step_key(entry, index)
         marker = "[bold cyan]>[/]" if highlight is not None and key == str(highlight) else " "
+        # Nearly every step is blocking, so only the exception is marked.
+        optional = "  [dim](non-blocking)[/]" if entry.get("blocking") is False else ""
         grid.add_row(
             marker,
             f"[bold]{key}[/]",
             str(entry.get("repo") or "-"),
             f"[{style}]{status or '-'}[/]",
-            step_title(entry, width),
+            key_runs(step_depends(entry)),
+            step_title(entry, width) + optional,
         )
     console.print(grid)
