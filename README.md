@@ -384,6 +384,8 @@ evo harness seams      # contract seams; --graph for the owner -> consumer DAG
 evo harness plans      # progress across every exec-plan
 evo harness show <plan>                 # every section, open questions with status and blocking
 evo harness show <plan> --step 3        # one step in full: what, verify, note, acceptance, evidence
+evo harness show <plan> --section acceptance  # each criterion in full: id, criterion, verify, steps naming it
+evo harness show <plan> --section non_goals   # each non-goal in full
 evo harness step <plan> --no-input      # the step board: repo, status, depends_on, title
 evo harness check <plan> [--fetch]      # what the plan claims vs what git says
 evo harness graph <plan>:steps          # the same DAG as an adjacency list

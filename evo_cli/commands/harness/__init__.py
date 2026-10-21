@@ -18,7 +18,7 @@ def harness_group():
     evo harness repos              repos in the manifest, with git state
     evo harness seams              contract seams: owner, consumers, verify command
     evo harness plans              progress across every exec-plan
-    evo harness show <plan>        read one plan (--step <id> prints one step in full)
+    evo harness show <plan>        read one plan (--step <id>, --section acceptance|non_goals: in full)
     evo harness graph <plan>       print a DAG as an adjacency list
     evo harness check <plan>       check what the plan claims against real git
     evo harness step <plan> 3 done mark a step (--evidence and --note append)

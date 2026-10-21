@@ -1,4 +1,5 @@
-"""`evo harness show --step`, the open questions `show` lists, and the depends_on column of the step board."""
+"""`evo harness show --step`, `--section acceptance` and `--section non_goals`, the open questions `show` lists,
+and the depends_on column of the step board."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from click.testing import CliRunner
 from evo_cli.cli import cli
 from evo_cli.commands.harness._dag import step_depends
 from evo_cli.commands.harness._render import key_runs
+from evo_cli.commands.harness.show import criterion_refs
 
 MIRROR_FIXTURE = Path(__file__).parent / "fixtures" / "hub" / "mirror-demo.yaml"
 
@@ -265,3 +267,195 @@ def test_step_depends_reads_every_forward_spelling_once_in_written_order():
         "4",
         "x",
     ]
+
+
+# show --section acceptance / non_goals
+
+LONG_CRITERION = (
+    "A criterion long enough to run past the sixty columns rich is given, so the acceptance section has to "
+    "print it whole on one line, with [Tính năng AI] in brackets that are not markup."
+)
+CRITERIA_PLAN = (
+    textwrap.dedent(
+        """\
+    id: graded
+    goal: A plan whose steps cite its acceptance criteria.
+    steps:
+      - id: 1
+        what: Build it.
+        acceptance: [a1, a2, Prose that mentions no id.]
+        status: done
+      - id: 2
+        what: Check it.
+        acceptance: "a1; a3"
+      - id: 3
+        what: Cites a criterion the plan lacks.
+        acceptance: [a9]
+      - id: 4
+        what: No acceptance at all.
+    acceptance:
+      - id: a1
+        criterion: >
+          LONG_HERE
+        verify: >
+          VERIFY_HERE
+      - id: a2
+        criterion: |
+          Two lines,
+          kept apart.
+        verify: pytest -q tests/test_two.py
+        invariant: true
+      - id: a3
+        what: Written with what instead of criterion.
+        status: met-in-code
+        evidence: abc1234 merged
+      - id: a4
+        criterion: Nobody names this one.
+        verify: make check
+    non_goals:
+      - Rewriting the scheduler.
+      - |
+        A non-goal over
+        two lines.
+      - Renderer for drag and drop: belongs to another plan.
+    """
+    )
+    .replace("LONG_HERE", LONG_CRITERION)
+    .replace("VERIFY_HERE", VERIFY)
+)
+
+STRING_PLAN = textwrap.dedent(
+    """\
+    id: plain
+    goal: An older plan whose criteria are plain strings.
+    steps:
+      - id: 1
+        what: Only step.
+    acceptance:
+      - The first criterion.
+      - |
+        A criterion over
+        two lines.
+    non_goals:
+      - Nothing else.
+    """
+)
+
+
+def test_show_acceptance_prints_each_criterion_whole_with_verify_and_the_steps_naming_it(tmp_path):
+    root = _harness(tmp_path, body=CRITERIA_PLAN, name="graded")
+
+    result = _run("show", "graded", "--section", "acceptance", "--harness", str(root), columns=60)
+
+    assert result.exit_code == 0, result.output
+    lines = _lines(result.output)
+    start = lines.index("Acceptance (4)")
+    body = lines[start + 1 :]
+    # Longer than the 60 columns rich was given, yet whole on one line; the brackets survive as text.
+    assert body[0] == "   a1 " + LONG_CRITERION
+    assert body[1] == "      verify: " + VERIFY
+    assert body[2] == "      steps: 1, 2"
+    assert body[3:7] == [
+        "   a2 Two lines,",
+        "      kept apart.",
+        "      verify: pytest -q tests/test_two.py",
+        "      invariant: true",
+    ]
+    assert body[7] == "      steps: 1"
+    assert body[8].split() == ["a3", "Written", "with", "what", "instead", "of", "criterion.", "met-in-code"]
+    assert body[9:11] == ["      evidence: abc1234 merged", "      steps: 2"]
+    assert body[11:14] == ["   a4 Nobody names this one.", "      verify: make check", "      steps: -"]
+    assert body[14] == "  steps name criteria this plan does not have: a9 (step 3)"
+    assert len(body) == 15
+    # Only the asked section: no step board, no non-goals.
+    assert "Steps" not in " ".join(lines) and "Non-goals" not in result.output
+
+
+def test_show_acceptance_prints_plain_string_criteria_by_position(tmp_path):
+    root = _harness(tmp_path, body=STRING_PLAN, name="plain")
+
+    result = _run("show", "plain", "--section", "acceptance", "--harness", str(root), columns=60)
+
+    assert result.exit_code == 0, result.output
+    lines = _lines(result.output)
+    start = lines.index("Acceptance (2)")
+    assert lines[start + 1 :] == [
+        "    0 The first criterion.",
+        "    1 A criterion over",
+        "      two lines.",
+    ]
+
+
+def test_show_non_goals_prints_each_non_goal_whole(tmp_path):
+    root = _harness(tmp_path, body=CRITERIA_PLAN, name="graded")
+
+    result = _run("show", "graded", "--section", "non_goals", "--harness", str(root), columns=40)
+
+    assert result.exit_code == 0, result.output
+    lines = _lines(result.output)
+    start = lines.index("Non-goals (3)")
+    assert lines[start + 1 :] == [
+        "    0 Rewriting the scheduler.",
+        "    1 A non-goal over",
+        "      two lines.",
+        # An unquoted "key: value" in YAML parses as a mapping; it prints back as the line it was.
+        "    2 Renderer for drag and drop: belongs to another plan.",
+    ]
+    assert "Acceptance" not in result.output
+
+
+def test_show_acceptance_and_non_goals_say_so_when_the_plan_has_none(tmp_path):
+    root = _harness(
+        tmp_path, body="id: bare\ngoal: Nothing to accept.\nsteps:\n  - id: 1\n    what: Only step.\n", name="bare"
+    )
+
+    result = _run(
+        "show", "bare", "--section", "acceptance", "--section", "non_goals", "--harness", str(root), columns=2000
+    )
+
+    assert result.exit_code == 0, result.output
+    lines = _lines(result.output)
+    assert "Acceptance (none in this plan)" in lines
+    assert "Non-goals (none in this plan)" in lines
+    # Without --section, a plan with neither list prints no line for them.
+    default = _run("show", "bare", "--harness", str(root), columns=2000)
+    assert default.exit_code == 0, default.output
+    assert "Acceptance" not in default.output and "Non-goals" not in default.output
+
+
+def test_show_board_counts_acceptance_and_non_goals_and_full_prints_them(tmp_path):
+    root = _harness(tmp_path, body=CRITERIA_PLAN, name="graded")
+
+    board = _run("show", "graded", "--harness", str(root), columns=200)
+
+    assert board.exit_code == 0, board.output
+    lines = [line.strip() for line in _lines(board.output)]
+    assert lines[-3:] == [
+        "Acceptance (4)  in full: --section acceptance",
+        "",
+        "Non-goals (3)  in full: --section non_goals",
+    ]
+    assert LONG_CRITERION not in board.output
+
+    full = _run("show", "graded", "--full", "--harness", str(root), columns=200)
+
+    assert full.exit_code == 0, full.output
+    lines = _lines(full.output)
+    assert "   a1 " + LONG_CRITERION in lines
+    assert "    0 Rewriting the scheduler." in lines
+    assert "in full:" not in full.output
+
+
+def test_section_choice_lists_acceptance_and_non_goals_in_help():
+    result = _run("show", "--help", columns=200)
+
+    assert result.exit_code == 0, result.output
+    assert "acceptance" in result.output and "non_goals" in result.output
+
+
+def test_criterion_refs_reads_ids_from_a_list_or_text_and_skips_prose():
+    assert criterion_refs(None) == []
+    assert criterion_refs("a1; a9") == ["a1", "a9"]
+    assert criterion_refs("a1, a2 a1") == ["a1", "a2"]
+    assert criterion_refs(["a3", "Prose naming a10 in passing.", "a2;a4", {"a5": "x"}]) == ["a3", "a10", "a2", "a4"]
+    assert criterion_refs(["A1", "a1.", "ab1", "a"]) == []
