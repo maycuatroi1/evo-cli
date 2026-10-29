@@ -5,7 +5,7 @@ import sys
 import rich_click as click
 from rich.text import Text
 
-from evo_cli.commands.route import _dpi, _hosts, _probe
+from evo_cli.commands.route import _dpi, _hosts, _probe, _spoofdpi
 from evo_cli.console import console, error, info, step, success, warning
 
 OPEN_EPILOG = Text.from_markup(
@@ -16,12 +16,13 @@ OPEN_EPILOG = Text.from_markup(
     "  [cyan]evo route open x.com --method dpi[/cyan]         force the DPI bypass\n\n"
     "[dim]Diagnoses first, then applies only the fix that matches: pinning an address\n"
     "for a poisoned name, or the packet-level bypass for a name-keyed block.\n"
-    "Needs administrator rights because it edits hosts / installs a service.[/dim]"
+    "Needs administrator rights because it edits hosts / installs a service;\n"
+    "on macOS the bypass is SpoofDPI as your own LaunchAgent and needs no sudo.[/dim]"
 )
 
 CLOSE_EPILOG = Text.from_markup(
     "[bold]Examples[/bold]\n\n"
-    "  [cyan]evo route close medium.com[/cyan]      drop that one pinned address\n"
+    "  [cyan]evo route close medium.com[/cyan]      drop its pin, or take it out of the bypass\n"
     "  [cyan]evo route close --all[/cyan]           drop every pin evo added\n"
     "  [cyan]evo route close --dpi[/cyan]           stop and remove the DPI bypass\n\n"
     "[dim]Only touches the block evo owns, marked in hosts by `# >>> evo route >>>`.\n"
@@ -51,9 +52,34 @@ def _apply_hosts(report, dry_run):
     return best
 
 
+def _apply_spoofdpi(host, dry_run):
+    if dry_run:
+        state = _spoofdpi.service_state()
+        if state["running"] and host in state["hosts"]:
+            info(f"{host} already goes through the DPI bypass - nothing to do.")
+        else:
+            info(f"Would run SpoofDPI on {_spoofdpi.listen()} as the system proxy, splitting the handshake for {host}")
+        return None
+    if _dpi.is_admin():
+        error("Run this without sudo: SpoofDPI runs as your own LaunchAgent and sets your proxy.")
+        sys.exit(1)
+    try:
+        state = _spoofdpi.ensure(host)
+    except RuntimeError as exc:
+        error(str(exc))
+        sys.exit(1)
+    if not state["running"]:
+        error(f"SpoofDPI would not start - see {_spoofdpi.log_path()}")
+        sys.exit(1)
+    success(f"DPI bypass is running on {_spoofdpi.listen()}, system proxy set on {', '.join(state['proxy'])}")
+    return state
+
+
 def _apply_dpi(report, dry_run):
+    if _dpi.is_macos():
+        return _apply_spoofdpi(report["host"], dry_run)
     if not _dpi.is_windows():
-        error("The DPI bypass is Windows-only. On Linux use a tunnel, or a tool like zapret.")
+        error("The DPI bypass runs on Windows and macOS. On Linux use a tunnel, or a tool like zapret.")
         sys.exit(1)
     if dry_run:
         state = _dpi.service_state()
@@ -121,6 +147,8 @@ def open_route(host, method, dry_run, timeout):
         return report
 
     step("Verify")
+    if method == "dpi" and _dpi.is_macos():
+        return _verify_through_proxy(host, timeout)
     with console.status(f"[info]re-checking {host}...[/info]", spinner="dots"):
         after = _probe.diagnose(host, timeout=timeout)
     if after["verdict"] in (_probe.OPEN, _probe.DNS_POISONED) and after["working"]:
@@ -128,6 +156,21 @@ def open_route(host, method, dry_run, timeout):
     else:
         warning(f"{host} still reports [bold]{after['verdict']}[/bold]. Run `evo route check {host}` for detail.")
     return after
+
+
+def _verify_through_proxy(host, timeout):
+    """The macOS bypass lives in a proxy, which a fresh diagnosis over raw sockets would never use."""
+    proxy = (_spoofdpi.LISTEN_HOST, _spoofdpi.LISTEN_PORT)
+    with console.status(f"[info]re-checking {host} through the proxy...[/info]", spinner="dots"):
+        row = _probe.proxy_probe(host, proxy, timeout=timeout)
+    if row["tls"]:
+        success(f"{host} is reachable through the DPI bypass")
+        info(f"Browsers pick it up from the system proxy; curl and other CLIs need -x http://{_spoofdpi.listen()}")
+        for override in _spoofdpi.browser_overrides():
+            warning(f"{override} holds the browser's proxy setting, so that browser skips the bypass - disable it")
+    else:
+        warning(f"{host} still fails through the bypass: {row['error']}. See {_spoofdpi.log_path()}")
+    return row
 
 
 @click.command("close", epilog=CLOSE_EPILOG)
@@ -152,16 +195,26 @@ def close_route(host, drop_all, drop_dpi):
         _hosts.clear()
         success(f"Removed {len(entries)} pinned address(es)")
     elif host:
-        _require_admin("Editing hosts")
-        _, removed = _hosts.unpin(host)
-        if removed:
+        closed = False
+        if _dpi.is_macos() and host in _spoofdpi.opened():
+            _spoofdpi.forget(host)
+            success(f"Took {host} out of the DPI bypass")
+            closed = True
+        if host in _hosts.read_block():
+            _require_admin("Editing hosts")
+            _hosts.unpin(host)
             success(f"Unpinned {host}")
-        else:
-            info(f"{host} was not pinned by evo - nothing changed.")
+            closed = True
+        if not closed:
+            info(f"{host} was not opened by evo - nothing changed.")
 
     if drop_dpi:
+        if _dpi.is_macos():
+            _spoofdpi.remove()
+            success("DPI bypass stopped and the system proxy cleared")
+            return
         if not _dpi.is_windows():
-            error("The DPI bypass is Windows-only.")
+            error("The DPI bypass runs on Windows and macOS.")
             sys.exit(1)
         _require_admin("Removing the DPI bypass")
         if _dpi.remove():

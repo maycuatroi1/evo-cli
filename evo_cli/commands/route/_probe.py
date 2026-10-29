@@ -37,12 +37,38 @@ def tls_probe(ip, sni, timeout=6.0):
     handshake is allowed to finish, not whether the certificate matches the
     name we announced.
     """
+    return _tls_over(lambda sock: sock.connect((ip, PORT)), ip, sni, timeout)
+
+
+def proxy_probe(host, proxy, timeout=6.0):
+    """Like ``tls_probe``, but through the HTTP proxy at ``proxy``: CONNECT first, then the handshake.
+
+    A raw socket never sees a bypass that lives in a proxy, so this is how to tell whether it works.
+    """
+
+    def connect(sock):
+        sock.connect(proxy)
+        sock.sendall(f"CONNECT {host}:{PORT} HTTP/1.1\r\nHost: {host}:{PORT}\r\n\r\n".encode())
+        reply = b""
+        while b"\r\n\r\n" not in reply:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            reply += chunk
+        status = reply.split(b"\r\n", 1)[0].decode(errors="replace")
+        if status.split()[1:2] != ["200"]:
+            raise OSError(f"proxy answered {status or 'nothing'}")
+
+    return _tls_over(connect, f"{proxy[0]}:{proxy[1]}", host, timeout)
+
+
+def _tls_over(connect, ip, sni, timeout):
     result = {"ip": ip, "sni": sni, "tcp": False, "tls": False, "ms": None, "error": None, "reset": False}
     started = time.perf_counter()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:
-        sock.connect((ip, PORT))
+        connect(sock)
         result["tcp"] = True
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False

@@ -1,10 +1,14 @@
+import json
 import socket
 import struct
+import subprocess
+import threading
 
+import pytest
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
-from evo_cli.commands.route import _dns, _dpi, _hosts, _probe
+from evo_cli.commands.route import _dns, _dpi, _hosts, _probe, _spoofdpi
 
 
 def test_route_registered():
@@ -186,3 +190,144 @@ def test_verify_download_rejects_the_wrong_size(tmp_path):
     ok, reason = _dpi.verify_download(blob)
     assert not ok
     assert "size mismatch" in reason
+
+
+def _fake_networksetup(proxies, calls):
+    """A networksetup stand-in: ``proxies`` maps (service, kind) to (enabled, server, port)."""
+
+    def run(*args):
+        calls.append(args)
+        out = ""
+        if args[0] == "-listallnetworkservices":
+            out = "An asterisk (*) denotes that a network service is disabled.\nWi-Fi\n*Old VPN\nUSB LAN\n"
+        elif args[0].startswith("-get"):
+            enabled, server, port = proxies.get((args[1], args[0][4:]), (False, "", "0"))
+            out = f"Enabled: {'Yes' if enabled else 'No'}\nServer: {server}\nPort: {port}\n"
+        return subprocess.CompletedProcess(args, 0, out, "")
+
+    return run
+
+
+def test_spoofdpi_host_list_round_trips_with_subdomains(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    _spoofdpi._write_hosts(["medium.com", "x.com", "medium.com"])
+    assert (tmp_path / "hosts.txt").read_text() == "medium.com\n*.medium.com\nx.com\n*.x.com\n"
+    assert _spoofdpi.opened() == ["medium.com", "x.com"]
+
+
+def test_spoofdpi_config_bypasses_only_the_opened_hosts():
+    """Every other name goes straight through, so names only a VPN resolves keep working."""
+    assert 'mode = "system"' in _spoofdpi.CONFIG
+    assert "skip = true" in _spoofdpi.CONFIG
+    assert '"file:hosts.txt"' in _spoofdpi.CONFIG
+    assert 'split-mode = "first-byte"' in _spoofdpi.CONFIG
+
+
+def test_network_services_skip_the_header_and_disabled_ones(monkeypatch):
+    monkeypatch.setattr(_spoofdpi, "_networksetup", _fake_networksetup({}, []))
+    assert _spoofdpi.network_services() == ["Wi-Fi", "USB LAN"]
+
+
+def test_ensure_refuses_to_replace_a_proxy_the_user_set(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    proxies = {("Wi-Fi", "securewebproxy"): (True, "10.0.0.1", "3128")}
+    monkeypatch.setattr(_spoofdpi, "_networksetup", _fake_networksetup(proxies, []))
+    with pytest.raises(RuntimeError, match=r"Wi-Fi \(10.0.0.1:3128\)"):
+        _spoofdpi.ensure("medium.com")
+    assert not (tmp_path / "hosts.txt").exists()
+
+
+def test_clear_system_proxy_turns_off_only_ours(monkeypatch):
+    ours = (True, _spoofdpi.LISTEN_HOST, str(_spoofdpi.LISTEN_PORT))
+    proxies = {
+        ("Wi-Fi", "webproxy"): ours,
+        ("Wi-Fi", "securewebproxy"): ours,
+        ("USB LAN", "webproxy"): (True, "10.0.0.1", "3128"),
+    }
+    calls = []
+    monkeypatch.setattr(_spoofdpi, "_networksetup", _fake_networksetup(proxies, calls))
+    assert _spoofdpi.clear_system_proxy() == ["Wi-Fi"]
+    offs = [call for call in calls if call[0].endswith("state")]
+    assert offs == [("-setwebproxystate", "Wi-Fi", "off"), ("-setsecurewebproxystate", "Wi-Fi", "off")]
+
+
+def test_forgetting_the_last_host_removes_the_bypass(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    _spoofdpi._write_hosts(["medium.com"])
+    removed = []
+    monkeypatch.setattr(_spoofdpi, "remove", lambda: removed.append(True) or True)
+    _spoofdpi.forget("medium.com")
+    assert removed == [True]
+
+
+def test_forgetting_one_host_restarts_with_the_rest(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    _spoofdpi._write_hosts(["medium.com", "x.com"])
+    starts = []
+    monkeypatch.setattr(_spoofdpi, "_start", lambda reload: starts.append(reload) or True)
+    _spoofdpi.forget("medium.com")
+    assert _spoofdpi.opened() == ["x.com"]
+    assert starts == [False]
+
+
+def _one_reply_proxy(reply):
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+
+    def serve():
+        conn, _ = server.accept()
+        with conn:
+            conn.recv(4096)
+            conn.sendall(reply)
+        server.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return server.getsockname()
+
+
+def test_proxy_probe_reports_a_refused_connect():
+    proxy = _one_reply_proxy(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+    row = _probe.proxy_probe("medium.com", proxy, timeout=2)
+    assert not row["tcp"] and not row["tls"]
+    assert "403" in row["error"]
+
+
+def test_open_on_linux_names_the_supported_systems(monkeypatch):
+    monkeypatch.setattr(_dpi, "is_macos", lambda: False)
+    monkeypatch.setattr(_dpi, "is_windows", lambda: False)
+    monkeypatch.setattr(_probe, "diagnose", lambda host, timeout: {"host": host, "verdict": _probe.SNI_BLOCKED})
+    result = CliRunner().invoke(cli, ["route", "open", "medium.com"])
+    assert result.exit_code == 1
+    assert "Windows and macOS" in result.output
+
+
+def _profile(support, browser, profile, settings, extensions=None):
+    root = support / browser / profile
+    root.mkdir(parents=True)
+    (root / "Secure Preferences").write_text(json.dumps({"extensions": {"settings": settings}}))
+    for ext_id, name in (extensions or {}).items():
+        version = root / "Extensions" / ext_id / "1.0_0"
+        (version / "_locales" / "en").mkdir(parents=True)
+        # Chrome writes manifests with a BOM, and most names are localised.
+        (version / "manifest.json").write_text(
+            "\ufeff" + json.dumps({"name": "__MSG_extName__", "default_locale": "en"})
+        )
+        (version / "_locales" / "en" / "messages.json").write_text(json.dumps({"extname": {"message": name}}))
+
+
+def test_browser_overrides_name_enabled_proxy_extensions_only(tmp_path):
+    """A VPN extension left at `direct` still hides the system proxy from Chrome."""
+    _profile(
+        tmp_path,
+        "Google/Chrome",
+        "Default",
+        {
+            "vpn": {"preferences": {"proxy": {"mode": "direct"}}},
+            "off": {"preferences": {"proxy": {"mode": "direct"}}, "disable_reasons": [1]},
+            "plain": {"preferences": {}},
+        },
+        {"vpn": "Windscribe", "off": "Decodo"},
+    )
+    _profile(tmp_path, "BraveSoftware/Brave-Browser", "Profile 1", {"x": {"preferences": {"proxy": {}}}})
+    assert _spoofdpi.browser_overrides(tmp_path) == ["Chrome (Default): Windscribe", "Brave-Browser (Profile 1): x"]

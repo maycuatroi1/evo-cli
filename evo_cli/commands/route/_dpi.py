@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -25,6 +26,11 @@ DEFAULT_ARGS = ["-f", "2", "-e", "2", "--auto-ttl", "--reverse-frag"]
 
 def is_windows():
     return os.name == "nt"
+
+
+def is_macos():
+    """macOS gets SpoofDPI instead of GoodbyeDPI; see _spoofdpi."""
+    return sys.platform == "darwin"
 
 
 def is_admin():
@@ -61,7 +67,7 @@ def _sc(*args, check=False):
 
 def service_state():
     if not is_windows():
-        return {"installed": False, "running": False, "args": None, "reason": "windows only"}
+        return {"installed": False, "running": False, "args": None, "reason": "Windows and macOS only"}
     result = _sc("qc", SERVICE_NAME)
     if result.returncode != 0:
         return {"installed": False, "running": False, "args": None, "reason": None}

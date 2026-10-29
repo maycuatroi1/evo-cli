@@ -20,7 +20,9 @@ edit can touch it.
 - `status` - which fixes are currently in place
 
 `check` and `probe` are pure Python sockets and need no privileges. `open` and
-`close` edit hosts or manage a service, so they want administrator rights.
+`close` edit hosts or manage a service, so they want administrator rights. On
+macOS the DPI bypass is SpoofDPI run as your own LaunchAgent behind the system
+proxy, which needs none.
 """
 
 
