@@ -266,6 +266,89 @@ def test_auth_token_is_a_notification_not_a_prompt():
     assert vpn.auth_commands(">PASSWORD:Auth-Token:ephemeral-secret", {}) == ""
 
 
+OTP_URL = "https://otp.example/public/link-secret"
+
+
+def test_otp_url_is_appended_without_a_challenge_and_scrv1_with_one(monkeypatch):
+    codes = iter(["123456", "654321"])
+    monkeypatch.setattr(vpn, "fetch_otp", lambda url: url == OTP_URL and next(codes))
+    profile = {"username": "u", "password": "1307", "otp_url": OTP_URL}
+    # A fresh code at each login: OpenVPN asks again on every restart (--auth-nocache).
+    assert 'password "Auth" "1307123456"' in vpn.auth_commands("Need 'Auth' username/password", profile)
+    line = ">PASSWORD:Need 'Auth' username/password SC:1,OTP"
+    assert "SCRV1:MTMwNw==:NjU0MzIx" in vpn.auth_commands(line, profile)
+
+
+def test_fetch_otp_checks_the_answer_without_echoing_the_link(monkeypatch):
+    import urllib.error
+
+    answers = iter([b"042137\n", b"<html>login</html>", urllib.error.HTTPError(OTP_URL, 403, "no", {}, None)])
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+    def urlopen(request, timeout):
+        assert request.get_header("User-agent") == "evo-cli" and timeout <= 5
+        answer = next(answers)
+        if isinstance(answer, BaseException):
+            raise answer
+        return Response(answer)
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    assert vpn.fetch_otp(OTP_URL) == "042137"
+    for _ in range(2):
+        with pytest.raises(CredentialError) as exc:
+            vpn.fetch_otp(OTP_URL)
+        assert "link-secret" not in str(exc.value)
+    with pytest.raises(CredentialError) as exc:
+        vpn.parse_otp_url("http://otp.example/public/link-secret")
+    assert "link-secret" not in str(exc.value)
+
+
+def test_credentials_otp_url_replaces_totp_and_serves_otp(store, monkeypatch):
+    vpn.save_profile("m1", {"config": CONFIG, "totp": vpn.parse_totp(SECRET)})
+    prompts = []
+
+    def getpass(prompt):
+        prompts.append(prompt)
+        return OTP_URL if prompt.startswith("OTP URL") else "1307"
+
+    monkeypatch.setattr("evo_cli.commands.openvpn.getpass.getpass", getpass)
+    monkeypatch.setattr(vpn, "fetch_otp", lambda url: "042137")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["openvpn", "credentials", "m1", "--username", "u", "--otp-url"])
+    assert result.exit_code == 0, result.output
+    assert prompts[0].startswith("VPN password or PIN, without the OTP")
+    assert "link-secret" not in result.output and "1307" not in result.output
+    profile = vpn.get_profile("m1")
+    assert (profile["password"], profile["otp_url"], "totp" in profile) == ("1307", OTP_URL, False)
+    assert runner.invoke(cli, ["openvpn", "otp", "m1"]).output.strip() == "042137"
+    listing = runner.invoke(cli, ["openvpn", "list"]).output
+    assert "url" in listing and "link-secret" not in listing
+    assert runner.invoke(cli, ["openvpn", "credentials", "m1", "--otp", "--otp-url"]).exit_code == 2
+
+
+def test_worker_pins_the_otp_host_even_for_a_full_tunnel(store, monkeypatch):
+    vpn.save_profile("m1", {"config": CONFIG, "username": "u", "password": "1307", "otp_url": OTP_URL})
+    monkeypatch.setattr(sys, "stdin", io.StringIO("\n"))
+    monkeypatch.setattr(vpn.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(vpn.shutil, "which", lambda _: "/fake/openvpn")
+    pinned = []
+    monkeypatch.setattr(vpn, "pin_remotes", lambda command, hosts: pinned.append(hosts) or command)
+
+    def popen(command, **_):
+        raise OSError("stop before running anything")
+
+    monkeypatch.setattr(vpn.subprocess, "Popen", popen)
+    vpn.worker("m1", 10)
+    # Not the full-tunnel server (OpenVPN routes it itself), only the host a reconnect needs for its OTP.
+    assert pinned == [["otp.example"]]
+
+
 def test_plain_password_escaping_and_no_unrequested_otp():
     text = vpn.auth_commands("Need 'Auth' username/password", {"username": "u", "password": 'p"\\'})
     assert text == 'username "Auth" "u"\npassword "Auth" "p\\"\\\\"\n'
@@ -318,6 +401,41 @@ def test_dead_worker_is_reaped_and_disconnect_confirms_it(store, monkeypatch):
     assert not any(Path(base + suffix).exists() for suffix in (".sock", ".mgmt", ".ovpn"))
     assert json.loads(Path(base + ".json").read_text())["state"] == "STOPPED"
     assert vpn.request("m1")["state"] == "STOPPED"  # so connect and import accept the profile again
+
+
+def test_connect_reports_the_failure_of_a_worker_closing_with_a_request_queued(store, monkeypatch):
+    import socket
+
+    vpn.save_profile("m1", {"config": CONFIG, "username": "u", "password": "p"})
+    base = str(vpn.session_path("m1"))
+    monkeypatch.setattr("evo_cli.commands.openvpn.shutil.which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr("evo_cli.commands.openvpn.os.geteuid", lambda: 0)
+    closed = threading.Event()
+
+    class ShuttingDown:
+        """A worker in its finally: final state published, control socket listening but never accepting."""
+
+        def __init__(self):
+            self.stdin = io.BytesIO()
+            self.control = socket.socket(socket.AF_UNIX)
+            self.control.bind(base + ".sock")
+            self.control.listen(2)
+            error = "VPN authentication rejected; check password/OTP enrollment before retrying."
+            vpn.private_write(Path(base + ".json"), json.dumps({"profile": "m1", "state": "FAILED", "error": error}))
+            threading.Timer(0.3, self.close).start()
+
+        def close(self):
+            self.control.close()
+            Path(base + ".sock").unlink()
+            closed.set()
+
+        def poll(self):
+            return 1 if closed.is_set() else None
+
+    monkeypatch.setattr("evo_cli.commands.openvpn.subprocess.Popen", lambda command, **_: ShuttingDown())
+    result = CliRunner().invoke(cli, ["openvpn", "connect", "m1", "--no-watch"])
+    assert result.exit_code == 1 and "VPN authentication rejected" in result.output, result.output
+    assert "Expecting value" not in result.output
 
 
 FAKE_OPENVPN = """
@@ -388,11 +506,8 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
     try:
         deadline = time.monotonic() + 8
         while thread.is_alive() and time.monotonic() < deadline:
-            try:
-                state = vpn.request("m1")
-            except (ConnectionResetError, json.JSONDecodeError):
-                time.sleep(0.05)
-                continue
+            # No retry on reset or empty replies: request() must read through the worker's shutdown.
+            state = vpn.request("m1")
             if state["state"] == "CONNECTED" and (mode != "reconnect" or state.get("reconnects")):
                 assert state["vpn_ip"] == "10.8.0.2"
                 assert state["since"] and (state["bytes_in"], state["bytes_out"]) == (1024, 2048)
