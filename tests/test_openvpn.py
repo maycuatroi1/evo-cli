@@ -126,6 +126,21 @@ def test_split_tunnel_is_only_what_provably_keeps_the_default_route(extra, full)
     assert vpn.takes_default_route(CONFIG + extra) is full
 
 
+CERT_ONLY = CONFIG.replace("auth-user-pass\n", "")
+
+
+@pytest.mark.parametrize(
+    "config,expected",
+    [
+        (CONFIG, True),
+        (CERT_ONLY, False),
+        (CERT_ONLY + "<key>\nauth-user-pass\n</key>\n", False),
+    ],
+)
+def test_only_auth_user_pass_asks_for_credentials(config, expected):
+    assert vpn.uses_credentials(config) is expected
+
+
 @pytest.mark.parametrize(
     "platform,output,gateway",
     [
@@ -448,6 +463,35 @@ def test_connect_stacks_a_split_tunnel_beside_a_full_one_only(store, monkeypatch
     assert result.exit_code != 0 and "both may take the default route" in result.output and not started
     result = runner.invoke(cli, ["openvpn", "connect", "split", "--no-watch"])
     assert "default route" not in result.output and started, result.output
+
+
+def test_cert_only_profile_connects_and_lists_without_credentials(store, monkeypatch):
+    vpn.save_profile("cert", {"config": CERT_ONLY})
+    vpn.save_profile("login", {"config": CONFIG})
+    monkeypatch.setattr(vpn, "request", lambda name, command="status": {"state": "STOPPED"})
+    monkeypatch.setattr("evo_cli.commands.openvpn.shutil.which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr("evo_cli.commands.openvpn.os.geteuid", lambda: 0)
+    started = []
+
+    class Exited:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+
+        def poll(self):
+            return 1
+
+    monkeypatch.setattr(
+        "evo_cli.commands.openvpn.subprocess.Popen", lambda command, **_: started.append(command) or Exited()
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ["openvpn", "connect", "login", "--no-watch"])
+    assert result.exit_code != 0 and "Missing credentials" in result.output and not started
+    result = runner.invoke(cli, ["openvpn", "connect", "cert", "--no-watch"])
+    assert "Missing credentials" not in result.output and started, result.output
+    rows = {
+        line.split()[1]: line.split()[-2] for line in runner.invoke(cli, ["openvpn", "list"]).output.splitlines()[1:3]
+    }
+    assert rows == {"cert": "cert", "login": "no"}
 
 
 def test_pick_profile_by_number_single_or_prompt(store, monkeypatch):

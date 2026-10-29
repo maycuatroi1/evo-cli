@@ -42,10 +42,20 @@ def _table(rows):
             _state_text(state["state"]),
             state.get("vpn_ip", ""),
             (profile.get("remotes") or [""])[0],
-            "yes" if profile.get("password") else "no",
+            _creds(profile),
             "yes" if profile.get("totp") else "no",
         )
     return table
+
+
+def _creds(profile):
+    """CREDS column: a certificate-only profile shows "cert", as it needs no username or password."""
+    if profile.get("password"):
+        return "yes"
+    try:
+        return "no" if vpn.uses_credentials(profile.get("config", "")) else "cert"
+    except vpn.CredentialError:
+        return "no"
 
 
 def _rows():
@@ -322,7 +332,7 @@ def connect(name, timeout, sudo_password_stdin, watch):
     _guard(vpn.validate_config, profile["config"])
     if not shutil.which("openvpn"):
         raise click.ClickException("Install OpenVPN first (macOS: brew install openvpn; Linux: your package manager).")
-    if not profile.get("username") or not profile.get("password"):
+    if _guard(vpn.uses_credentials, profile["config"]) and not (profile.get("username") and profile.get("password")):
         raise click.ClickException("Missing credentials; run evo openvpn credentials PROFILE.")
     if _guard(vpn.request, name)["state"] != "STOPPED":
         raise click.ClickException("This profile already has a worker; use status or disconnect first.")

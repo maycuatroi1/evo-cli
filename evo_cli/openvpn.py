@@ -178,6 +178,11 @@ def validate_config(text):
     return remotes
 
 
+def uses_credentials(text):
+    """Whether OpenVPN will ask for a username and password; a certificate-only profile never does."""
+    return any(words[0].removeprefix("--") == "auth-user-pass" for _, words in _directives(text))
+
+
 def takes_default_route(text):
     """Whether a profile may take the default route. Only split-tunnel profiles can run beside another VPN.
 
