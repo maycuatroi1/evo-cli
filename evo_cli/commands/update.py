@@ -18,10 +18,15 @@ from evo_cli import __version__
 from evo_cli.console import CommandError, console, info, run_command, step, success, warning
 
 PACKAGE = "evo_cli"
+TOOL_NAME = "evo-cli"
 PYPI_JSON = "https://pypi.org/pypi/{package}/json"
 
 VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)(?:[-_.]?(dev|alpha|a|beta|b|rc|c|pre)[-_.]?(\d*))?")
 PRE_RANK = {"dev": -4, "alpha": -3, "a": -3, "beta": -2, "b": -2, "pre": -1, "rc": -1, "c": -1}
+
+EXACT_PIN_RE = re.compile(r"^===?\s*([^\s,*]+)$")
+PLAIN_RECEIPT_KEYS = {"requirements", "python", "entrypoints", "options"}
+PLAIN_REQUIREMENT_KEYS = {"name", "extras", "specifier"}
 
 EPILOG = Text.from_markup(
     "[bold]Examples[/bold]\n\n"
@@ -31,7 +36,9 @@ EPILOG = Text.from_markup(
     "  [cyan]evo update --dry-run[/cyan]    print the commands without running them\n"
     "  [cyan]evo update --force[/cyan]      reinstall even when already current\n\n"
     "[dim]An editable checkout is updated with git (fast-forward only, refusing to touch a\n"
-    "dirty tree); a pipx, uv or pip install is upgraded with its own installer.[/dim]"
+    "dirty tree); a pipx, uv or pip install is upgraded with its own installer. A uv tool\n"
+    "pinned to an older ==version is reinstalled without the pin. The update succeeds only\n"
+    "when the installed version reaches the newest release afterwards.[/dim]"
 )
 
 
@@ -138,7 +145,79 @@ def report(install, current, latest):
     console.print()
 
 
-def build_commands(mode, allow_pre):
+def load_toml(path):
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10
+        try:
+            import tomli as tomllib
+        except ImportError:
+            return {}
+    try:
+        with open(path, "rb") as handle:
+            return tomllib.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+
+def normalize_name(name):
+    return re.sub(r"[-_.]+", "-", str(name or "")).lower()
+
+
+def uv_receipt(location):
+    """The `[tool]` table of a uv tool receipt and its evo-cli requirement (None when absent)."""
+    tool = load_toml(Path(location) / "uv-receipt.toml").get("tool") or {}
+    for requirement in tool.get("requirements") or []:
+        if isinstance(requirement, dict) and normalize_name(requirement.get("name")) == TOOL_NAME:
+            return tool, requirement
+    return tool, None
+
+
+def exact_pin(requirement):
+    match = EXACT_PIN_RE.match(str((requirement or {}).get("specifier") or "").strip())
+    return match.group(1) if match else None
+
+
+def requirement_text(requirement, specifier):
+    extras = requirement.get("extras") or []
+    name = requirement["name"] + (f"[{','.join(extras)}]" if extras else "")
+    return f"{name}{specifier}"
+
+
+def uv_reinstall_command(location, latest, allow_pre):
+    """Reinstall a uv tool whose receipt pins an older `==` version, since `uv tool upgrade` keeps the pin.
+
+    Only a plain receipt is rebuilt: one evo-cli requirement from the index plus an optional Python
+    request. Anything more (`--with`, a git source, index options) goes through `uv tool upgrade`,
+    and the version check afterwards says what to run.
+    """
+    tool, requirement = uv_receipt(location)
+    pinned = exact_pin(requirement)
+    if latest is None or pinned is None or parse_version(pinned) >= parse_version(latest):
+        return None
+    if set(tool) - PLAIN_RECEIPT_KEYS or any((tool.get("options") or {}).values()):
+        return None
+    if len(tool.get("requirements") or []) != 1 or set(requirement) - PLAIN_REQUIREMENT_KEYS:
+        return None
+    info(f"The uv receipt pins [accent]{TOOL_NAME}=={pinned}[/accent], so the tool is reinstalled without the pin.")
+    cmd = [
+        "uv",
+        "tool",
+        "install",
+        "--force",
+        "--refresh-package",
+        requirement["name"],
+        requirement_text(requirement, f">={latest}"),
+    ]
+    if tool.get("python"):
+        cmd += ["--python", str(tool["python"])]
+    if allow_pre:
+        cmd.append("--prerelease=allow")
+    return cmd
+
+
+def build_commands(install, latest, allow_pre):
+    mode = install["mode"]
     target = f"{PACKAGE}"
     if mode == "pipx":
         if shutil.which("pipx") is None:
@@ -150,6 +229,9 @@ def build_commands(mode, allow_pre):
     if mode == "uv":
         if shutil.which("uv") is None:
             raise click.ClickException("This looks like a uv tool install but uv is not on PATH.")
+        reinstall = uv_reinstall_command(install["location"], latest, allow_pre)
+        if reinstall:
+            return [reinstall]
         cmd = ["uv", "tool", "upgrade", target]
         if allow_pre:
             cmd.append("--prerelease=allow")
@@ -161,6 +243,80 @@ def build_commands(mode, allow_pre):
     if allow_pre:
         cmd.append("--pre")
     return [cmd]
+
+
+def installed_version():
+    """The evo version the install holds now, read by a new interpreter: this process keeps the old one.
+
+    The probe drops the current directory ("") from sys.path so that a checkout's egg-info cannot answer.
+    """
+    code = (
+        "import sys; sys.path = [p for p in sys.path if p]; "
+        f"from importlib.metadata import version; print(version({PACKAGE!r}))"
+    )
+    probe = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    version = (probe.stdout or "").strip()
+    return version if probe.returncode == 0 and version else None
+
+
+def pipx_spec(location):
+    try:
+        data = json.loads((Path(location) / "pipx_metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return (data.get("main_package") or {}).get("package_or_url")
+
+
+def stale_hint(install, latest):
+    """Why the installer stopped short of `latest`, and the command that gets there."""
+    location = install["location"]
+    if install["mode"] == "uv":
+        _, requirement = uv_receipt(location)
+        specifier = (requirement or {}).get("specifier")
+        fix = f"uv tool install --force --refresh-package {TOOL_NAME} '{TOOL_NAME}>={latest}'"
+        if specifier:
+            receipt = Path(location) / "uv-receipt.toml"
+            return (
+                f"{receipt} pins {TOOL_NAME}{specifier}, which `uv tool upgrade` keeps. "
+                f"Reinstall without the pin:\n  {fix}"
+            )
+        return f"uv may have read a cached package index from before the release. Refresh it:\n  {fix}"
+    if install["mode"] == "pipx":
+        fix = f"pipx install --force '{TOOL_NAME}>={latest}'"
+        spec = pipx_spec(location)
+        if spec and re.search(r"[=<>~!]", spec):
+            return f"pipx installed evo as {spec}, which `pipx upgrade` keeps. Reinstall without the pin:\n  {fix}"
+        return f"Reinstall it:\n  {fix}"
+    return (
+        "A pip constraint or a cached index may hold it back. Run:\n"
+        f"  {sys.executable} -m pip install --upgrade '{TOOL_NAME}>={latest}'"
+    )
+
+
+def confirm_update(install, current, latest):
+    """Report success only for the version that is really installed now."""
+    installed = installed_version()
+    if installed is None:
+        raise click.ClickException("The installer finished, but the installed evo version cannot be read.")
+    if latest is None:
+        if installed == current:
+            warning(f"evo is still at [accent]{installed}[/accent], and PyPI did not say whether a newer one exists.")
+        else:
+            success(f"evo is now at [accent]{installed}[/accent].")
+        return
+    if parse_version(installed) < parse_version(latest):
+        raise click.ClickException(
+            f"evo is still at {installed}, not {latest}, after the update. {stale_hint(install, latest)}"
+        )
+    success(f"evo updated to [accent]{installed}[/accent].")
+    info("Open a new shell if the `evo` command still reports the old version.")
 
 
 def execute(commands, dry_run):
@@ -238,7 +394,7 @@ def update_editable(path, check, force, dry_run):
         success(f"evo is now at [accent]{version_file.read_text(encoding='utf-8').strip()}[/accent]")
 
 
-def update_package(mode, current, latest, check, allow_pre, force, dry_run):
+def update_package(install, current, latest, check, allow_pre, force, dry_run):
     if latest is None:
         if check:
             raise click.ClickException("Cannot determine the latest version from PyPI.")
@@ -253,10 +409,9 @@ def update_package(mode, current, latest, check, allow_pre, force, dry_run):
         info("Run [accent]evo update[/accent] to install it.")
         return
 
-    execute(build_commands(mode, allow_pre), dry_run)
+    execute(build_commands(install, latest, allow_pre), dry_run)
     if not dry_run:
-        success(f"evo updated to [accent]{latest or 'the latest release'}[/accent].")
-        info("Open a new shell if the `evo` command still reports the old version.")
+        confirm_update(install, current, latest)
 
 
 @click.command("update", epilog=EPILOG, context_settings={"help_option_names": ["-h", "--help"]})
@@ -288,4 +443,4 @@ def update(check, allow_pre, force, dry_run, timeout):
     if install["mode"] == "editable":
         update_editable(install["location"], check, force, dry_run)
         return
-    update_package(install["mode"], __version__, latest, check, allow_pre, force, dry_run)
+    update_package(install, __version__, latest, check, allow_pre, force, dry_run)
