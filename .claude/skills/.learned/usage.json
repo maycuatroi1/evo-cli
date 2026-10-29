@@ -1,13 +1,13 @@
 {
   "version": 1,
   "curator": {
-    "last_run_at": "2026-08-23T19:28:27+00:00",
+    "last_run_at": "2026-10-29T17:07:20+00:00",
     "paused": false
   },
   "skills": {
     "html-form-submit-button-name-clobber": {
       "created_at": "2026-08-25T00:41:40+00:00",
-      "state": "active",
+      "state": "stale",
       "source_session": "17132ff0-0e62-4b3d-b504-f1add87835f5",
       "description": "Diagnose and fix form submission failures when button is named 'submit'",
       "use_count": 0,
@@ -19,85 +19,146 @@
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "macos-safe-cleanup-sequence": {
       "created_at": "2026-09-24T17:10:28+00:00",
-      "use_count": 0,
+      "use_count": 1,
       "pinned": false,
-      "state": "active",
-      "last_used_at": "2026-09-24T17:10:28+00:00"
+      "state": "stale",
+      "last_used_at": "2026-09-24T17:16:27+00:00",
+      "last_seen_session": "6a853e65-656b-45ea-acb4-feea5e3ac57e"
     },
     "makefile-oneshell-failure-masking": {
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "nmap-tuning-for-filtered-hosts": {
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "public-repo-pre-commit-security-audit": {
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "pytest-monkeypatch-iterator-state": {
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "ruff-version-rule-stability": {
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "subprocess-stdin-inheritance-debugging": {
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "windows-disk-usage-drill-down": {
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "windows-subprocess-resolve-executable": {
       "created_at": "2026-09-24T17:10:28+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:10:28+00:00"
     },
     "railway-graphql-api": {
       "created_at": "2026-09-24T17:15:09+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:15:09+00:00"
     },
     "uv-managed-python-dev-setup": {
       "created_at": "2026-09-24T17:15:09+00:00",
       "use_count": 0,
       "pinned": false,
-      "state": "active",
+      "state": "stale",
       "last_used_at": "2026-09-24T17:15:09+00:00"
+    },
+    "daemon-stale-state-recovery": {
+      "created_at": "2026-10-01T07:42:48+00:00",
+      "state": "pending",
+      "source_session": "ed390609-7eb2-4879-bee5-cc868749c7b8",
+      "description": "Detect and recover from background worker processes that died unexpectedly but left stale state files",
+      "use_count": 0,
+      "last_used_at": null,
+      "last_seen_session": null,
+      "pinned": false
+    },
+    "electron-multiinstance-user-data-dir": {
+      "created_at": "2026-10-05T07:37:36+00:00",
+      "state": "pending",
+      "source_session": "d7b56639-479e-48ef-8e00-15cae58dd6f4",
+      "description": "Launch multiple isolated instances of an Electron app with separate user data directories and persistent launchers",
+      "use_count": 0,
+      "last_used_at": null,
+      "last_seen_session": null,
+      "pinned": false
+    },
+    "socket-rpc-error-recovery": {
+      "created_at": "2026-10-07T13:40:32+00:00",
+      "state": "pending",
+      "source_session": "111c1378-b0af-4cb4-89d6-e4bc3a0194ef",
+      "description": "Recover true error from saved state when async worker socket closes before JSON reply",
+      "use_count": 0,
+      "last_used_at": null,
+      "last_seen_session": null,
+      "pinned": false
+    },
+    "git-worktree-cleanup": {
+      "created_at": "2026-10-12T05:36:27+00:00",
+      "state": "pending",
+      "source_session": "e93fbb0c-6aa5-45be-8557-36d2e0028ba9",
+      "description": "Safely identify and remove merged worktrees after branches are integrated",
+      "use_count": 0,
+      "last_used_at": null,
+      "last_seen_session": null,
+      "pinned": false
+    },
+    "git-repository-age-audit": {
+      "created_at": "2026-10-12T05:36:27+00:00",
+      "state": "pending",
+      "source_session": "e93fbb0c-6aa5-45be-8557-36d2e0028ba9",
+      "description": "Scan repositories by git commit age and dirty status to identify stale or inactive projects",
+      "use_count": 0,
+      "last_used_at": null,
+      "last_seen_session": null,
+      "pinned": false
+    },
+    "chrome-extension-proxy-interference": {
+      "created_at": "2026-10-29T17:07:20+00:00",
+      "state": "pending",
+      "source_session": "e38cc18e-0b04-488d-bb52-dbcea84d585e",
+      "description": "Debug system proxy ignored by Chrome due to extension proxy overrides",
+      "use_count": 0,
+      "last_used_at": null,
+      "last_seen_session": null,
+      "pinned": false
     }
   }
 }

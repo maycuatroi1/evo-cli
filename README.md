@@ -126,6 +126,8 @@ permissions and private-repository access, not an encrypted vault. Do not sync i
 a public repository or treat storing the password and OTP together as independent factors.
 
 Use `credentials NAME --otp` for hidden manual enrollment input instead of a QR image.
+For a PIN+OTP server whose codes come from a link, `credentials NAME --otp-url` saves the
+https link (hidden input; it is a secret) and each login sends the PIN plus a fresh code.
 `evo openvpn otp NAME` explicitly prints the current code; list and status never print
 secrets. Sudo passwords are not stored. Automation can pass the sudo password on stdin
 with `connect NAME --sudo-password-stdin`, not in an argument or environment variable.

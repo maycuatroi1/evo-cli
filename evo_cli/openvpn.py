@@ -238,12 +238,14 @@ def remote_addresses(remotes):
 
 
 def pin_remotes(command, remotes):
-    """Wrap OpenVPN so the profile's servers stay on the physical gateway while it runs.
+    """Wrap OpenVPN so the given hosts (a remote's first word) stay on the physical gateway while it runs.
 
     A split-tunnel profile adds no host route for its own server, so a full-tunnel VPN that is (or later comes)
-    up would carry this handshake inside itself and break it on either side's reconnect. The wrapper runs as
-    root with OpenVPN: pin each server, run OpenVPN, unpin after it exits. Addresses are validated IPs, so
-    they are safe to place in the script; the OpenVPN command is passed as arguments, never interpolated.
+    up would carry this handshake inside itself and break it on either side's reconnect. The same holds for
+    an OTP URL's host, which a reconnect needs while the routes still lead into the tunnel that is down. The
+    wrapper runs as root with OpenVPN: pin each host, run OpenVPN, unpin after it exits. Addresses are
+    validated IPs, so they are safe to place in the script; the OpenVPN command is passed as arguments, never
+    interpolated.
     """
     gateway, addresses = default_gateway(), remote_addresses(remotes)
     if not gateway or not addresses:
@@ -308,6 +310,43 @@ def totp(settings, at=None):
     offset = digest[-1] & 15
     number = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
     return str(number % (10**digits)).zfill(digits)
+
+
+def parse_otp_url(value):
+    """An https link that answers with the current OTP as bare digits; checked by fetching one code.
+
+    The link alone yields valid codes, so it is a secret: errors never echo it.
+    """
+    value = value.strip()
+    uri = urlparse(value)
+    if uri.scheme != "https" or not uri.hostname:
+        raise CredentialError("The OTP URL must be an https:// link.")
+    fetch_otp(value)
+    return value
+
+
+def fetch_otp(url):
+    import http.client
+    import urllib.request
+
+    # Cloudflare answers the default Python-urllib agent with 403.
+    request = urllib.request.Request(url, headers={"User-Agent": "evo-cli"})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            code = response.read(64).decode(errors="replace").strip()
+    except (OSError, ValueError, http.client.HTTPException):
+        raise CredentialError("Cannot fetch the OTP from its URL; check the network and the link.") from None
+    if not re.fullmatch(r"\d{6,8}", code):
+        raise CredentialError("The OTP URL did not answer with a 6-8 digit code.")
+    return code
+
+
+def current_otp(profile):
+    if profile.get("totp"):
+        return totp(profile["totp"])
+    if profile.get("otp_url"):
+        return fetch_otp(profile["otp_url"])
+    raise CredentialError("This profile needs OTP; run evo openvpn credentials PROFILE --otp or --otp-url.")
 
 
 def qr_totp(path):
@@ -423,6 +462,17 @@ def _reap(name, last):
     return state
 
 
+def _saved_state(name):
+    path = Path(str(session_path(name)) + ".json")
+    if path.exists():
+        last = json.loads(path.read_text())
+        if last["state"] not in ("FAILED", "STOPPED") or last.get("cleanup_failed"):
+            return _reap(name, last)
+        if last.get("error"):
+            return {"profile": name, "state": "STOPPED", "error": last["error"]}
+    return {"profile": name, "state": "STOPPED"}
+
+
 def request(name, command="status"):
     endpoint = str(session_path(name)) + ".sock"
     with socket.socket(socket.AF_UNIX) as client:
@@ -430,20 +480,20 @@ def request(name, command="status"):
         try:
             client.connect(endpoint)
         except (FileNotFoundError, ConnectionRefusedError):
-            path = Path(str(session_path(name)) + ".json")
-            if path.exists():
-                last = json.loads(path.read_text())
-                if last["state"] not in ("FAILED", "STOPPED") or last.get("cleanup_failed"):
-                    return _reap(name, last)
-                if last.get("error"):
-                    return {"profile": name, "state": "STOPPED", "error": last["error"]}
-            return {"profile": name, "state": "STOPPED"}
-        client.sendall(command.encode() + b"\n")
+            return _saved_state(name)
         # The worker closes after one reply; a log reply spans several reads.
         chunks = []
-        while chunk := client.recv(65536):
-            chunks.append(chunk)
-        return json.loads(b"".join(chunks))
+        try:
+            client.sendall(command.encode() + b"\n")
+            while chunk := client.recv(65536):
+                chunks.append(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            chunks = []
+    if not chunks:
+        # A worker that is shutting down publishes its final state, then closes the control socket with
+        # this request still queued (EOF on macOS, reset on Linux). Its outcome is in the saved state.
+        return _saved_state(name)
+    return json.loads(b"".join(chunks))
 
 
 def quote(value):
@@ -464,12 +514,11 @@ def auth_commands(line, profile):
     if not username or not password:
         raise CredentialError("Missing username/password; run evo openvpn credentials PROFILE.")
     if "SC:" in line:
-        settings = profile.get("totp")
-        if not settings:
-            raise CredentialError("This profile needs OTP; run evo openvpn credentials PROFILE --otp.")
-        password = (
-            f"SCRV1:{base64.b64encode(password.encode()).decode()}:{base64.b64encode(totp(settings).encode()).decode()}"
-        )
+        code = current_otp(profile)
+        password = f"SCRV1:{base64.b64encode(password.encode()).decode()}:{base64.b64encode(code.encode()).decode()}"
+    elif profile.get("otp_url"):
+        # PIN+OTP servers take the code appended to the password; no challenge announces it.
+        password += fetch_otp(profile["otp_url"])
     return f'username "Auth" {quote(username)}\npassword "Auth" {quote(password)}\n'
 
 
@@ -543,8 +592,11 @@ def worker(name, timeout):
             "--verb",
             "3",
         ]
-        if not takes_default_route(profile["config"]):
-            command = pin_remotes(command, remotes)
+        pinned = [] if takes_default_route(profile["config"]) else remotes
+        if profile.get("otp_url"):
+            pinned = [*pinned, urlparse(profile["otp_url"]).hostname]
+        if pinned:
+            command = pin_remotes(command, pinned)
         if os.geteuid() != 0:
             command = ["sudo", "-S", "-p", "", "--"] + command
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

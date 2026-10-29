@@ -43,7 +43,7 @@ def _table(rows):
             state.get("vpn_ip", ""),
             (profile.get("remotes") or [""])[0],
             _creds(profile),
-            "yes" if profile.get("totp") else "no",
+            "url" if profile.get("otp_url") else "yes" if profile.get("totp") else "no",
         )
     return table
 
@@ -56,6 +56,17 @@ def _creds(profile):
         return "no" if vpn.uses_credentials(profile.get("config", "")) else "cert"
     except vpn.CredentialError:
         return "no"
+
+
+def _ask(name, command="status"):
+    """vpn.request for polling loops, where a missed 2s reply is no verdict.
+
+    A worker stops answering for a moment while it fetches an OTP or waits for OpenVPN to exit.
+    """
+    try:
+        return _guard(vpn.request, name, command)
+    except OSError:
+        return {"profile": name, "state": "UNKNOWN", "error": "Worker did not answer in time."}
 
 
 def _rows():
@@ -233,7 +244,9 @@ def import_profile(name, config, replace):
     click.echo(f"Imported {name} into evo cred: openvpn.profiles.{name}")
 
 
-@openvpn_group.command("credentials", help="Save username/password and optionally a TOTP enrollment; input is hidden.")
+@openvpn_group.command(
+    "credentials", help="Save username/password and optionally an OTP source (TOTP or URL); input is hidden."
+)
 @click.argument("name", required=False)
 @click.option("--username", help="VPN account name; password is prompted, never passed as an argument.")
 @click.option("--password-stdin", is_flag=True, help="Read VPN password from stdin rather than the hidden prompt.")
@@ -241,22 +254,34 @@ def import_profile(name, config, replace):
 @click.option(
     "--qr", type=click.Path(exists=True, dir_okay=False, path_type=Path), help="Read OTP from a local QR image."
 )
-def credentials(name, username, password_stdin, otp, qr):
-    if otp and qr:
-        raise click.UsageError("Use either --otp or --qr, not both.")
+@click.option(
+    "--otp-url",
+    is_flag=True,
+    help="Prompt for a link that answers with the current OTP; each login sends the password (PIN) plus a fresh code.",
+)
+def credentials(name, username, password_stdin, otp, qr, otp_url):
+    if otp + bool(qr) + otp_url > 1:
+        raise click.UsageError("Use only one of --otp, --qr and --otp-url.")
     name = _pick(name)
     profile = _guard(vpn.get_profile, name)
     username = username or click.prompt("Username", default=profile.get("username", ""))
-    password = sys.stdin.readline().rstrip("\n") if password_stdin else getpass.getpass("VPN password (hidden): ")
+    label = "VPN password or PIN, without the OTP" if otp_url or profile.get("otp_url") else "VPN password"
+    password = sys.stdin.readline().rstrip("\n") if password_stdin else getpass.getpass(f"{label} (hidden): ")
     if not password:
         raise click.ClickException("Empty password; nothing saved.")
     _guard(vpn.quote, username)
     _guard(vpn.quote, password)
     profile.update(username=username, password=password)
+    # One OTP source per profile.
     if qr:
         profile["totp"] = _guard(vpn.qr_totp, qr)
+        profile.pop("otp_url", None)
     elif otp:
         profile["totp"] = _guard(vpn.parse_totp, getpass.getpass("OTP enrollment secret/URI (hidden): "))
+        profile.pop("otp_url", None)
+    elif otp_url:
+        profile["otp_url"] = _guard(vpn.parse_otp_url, getpass.getpass("OTP URL (hidden): "))
+        profile.pop("totp", None)
     _guard(vpn.save_profile, name, profile)
     click.echo(f"Saved credentials for {name}. Sync explicitly with: evo cred sync push")
 
@@ -265,10 +290,10 @@ def credentials(name, username, password_stdin, otp, qr):
 @click.argument("name", required=False)
 def otp_code(name):
     name = _pick(name)
-    settings = _guard(vpn.get_profile, name).get("totp")
-    if not settings:
+    profile = _guard(vpn.get_profile, name)
+    if not profile.get("totp") and not profile.get("otp_url"):
         raise click.ClickException("No OTP enrollment for this profile.")
-    click.echo(_guard(vpn.totp, settings))
+    click.echo(_guard(vpn.current_otp, profile))
 
 
 @openvpn_group.command("status", help="Query the live worker; stale status files never count as connected.")
@@ -303,13 +328,13 @@ def disconnect(name):
 
 
 def _disconnect(name):
-    state = _guard(vpn.request, name, "disconnect")
+    state = _ask(name, "disconnect")
     if state["state"] == "STOPPED" and state.get("error"):
         click.echo(f"{name} was not running; last error: {state['error']}", err=True)
     deadline = time.monotonic() + 20
     while state["state"] != "STOPPED" and time.monotonic() < deadline:
         time.sleep(0.2)
-        state = _guard(vpn.request, name)
+        state = _ask(name)
     if state["state"] != "STOPPED":
         raise click.ClickException(state.get("error") or "Disconnect not confirmed; inspect evo openvpn status.")
     click.echo(f"{name}: stopped (OpenVPN Connect profiles unchanged).")
@@ -369,7 +394,7 @@ def connect(name, timeout, sudo_password_stdin, watch):
     deadline = time.monotonic() + timeout + 20
     try:
         while time.monotonic() < deadline:
-            state = _guard(vpn.request, name)
+            state = _ask(name)
             if state["state"] == "CONNECTED":
                 click.echo(f"{name}: connected, tunnel IP {state.get('vpn_ip', 'unknown')}")
                 break
@@ -380,8 +405,8 @@ def connect(name, timeout, sudo_password_stdin, watch):
                 raise click.ClickException("OpenVPN worker exited before startup.")
             time.sleep(0.2)
     finally:
-        if _guard(vpn.request, name)["state"] != "CONNECTED":
-            _guard(vpn.request, name, "disconnect")
+        if _ask(name)["state"] != "CONNECTED":
+            _ask(name, "disconnect")
     if state["state"] != "CONNECTED":
         raise click.ClickException("Connection not confirmed before timeout; disconnect requested.")
     _guard(vpn.remember, name)
