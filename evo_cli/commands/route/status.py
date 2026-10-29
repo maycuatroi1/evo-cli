@@ -6,7 +6,7 @@ import rich_click as click
 from rich.table import Table
 from rich.text import Text
 
-from evo_cli.commands.route import _dpi, _hosts
+from evo_cli.commands.route import _dpi, _hosts, _spoofdpi
 from evo_cli.console import console, info, step, success
 
 EPILOG = Text.from_markup(
@@ -22,7 +22,7 @@ def collect():
     return {
         "hosts_file": str(_hosts.hosts_path()),
         "pinned": _hosts.read_block(),
-        "dpi": _dpi.service_state(),
+        "dpi": _spoofdpi.service_state() if _dpi.is_macos() else _dpi.service_state(),
         "admin": _dpi.is_admin(),
     }
 
@@ -68,5 +68,9 @@ def status(as_json):
     else:
         info("Installed but stopped.")
         console.print(f"  [dim]{dpi['args']}[/dim]")
+    if dpi.get("hosts"):
+        info(f"Hosts: {', '.join(dpi['hosts'])} - remove with `evo route close <host>`")
+    if dpi.get("proxy"):
+        info(f"System proxy set on {', '.join(dpi['proxy'])}")
 
     return state
