@@ -8,7 +8,7 @@ import pytest
 from click.testing import CliRunner
 
 from evo_cli.cli import cli
-from evo_cli.commands.route import _dns, _dpi, _hosts, _probe, _spoofdpi
+from evo_cli.commands.route import _dns, _dpi, _hosts, _page, _probe, _spoofdpi
 
 
 def test_route_registered():
@@ -257,8 +257,14 @@ def _fake_networksetup(proxies, calls):
 def test_spoofdpi_host_list_round_trips_with_subdomains(tmp_path, monkeypatch):
     monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
     _spoofdpi._write_hosts(["medium.com", "x.com", "medium.com"])
-    assert (tmp_path / "hosts.txt").read_text() == "medium.com\n*.medium.com\nx.com\n*.x.com\n"
+    assert (tmp_path / "hosts.txt").read_text() == "medium.com\n**.medium.com\nx.com\n**.x.com\n"
     assert _spoofdpi.opened() == ["medium.com", "x.com"]
+
+
+def test_spoofdpi_reads_a_host_list_from_before_the_double_star(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    (tmp_path / "hosts.txt").write_text("medium.com\n*.medium.com\n")
+    assert _spoofdpi.opened() == ["medium.com"]
 
 
 def test_spoofdpi_config_bypasses_only_the_opened_hosts():
@@ -337,6 +343,154 @@ def test_proxy_probe_reports_a_refused_connect():
     row = _probe.proxy_probe("medium.com", proxy, timeout=2)
     assert not row["tcp"] and not row["tls"]
     assert "403" in row["error"]
+
+
+PAGE_HTML = """
+<html><head>
+<link rel="canonical" href="https://other.example/">
+<link rel="stylesheet" href="https://store.fastly.steamstatic.com/a.css">
+<link rel="preconnect" href="//shared.fastly.steamstatic.com">
+<link rel="icon" href="/favicon.ico">
+<script src="https://cdn.fastly.steamstatic.com/a.js"></script>
+</head><body>
+<a href="https://steamcommunity.com/">a link is not a load</a>
+<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+<img src="https://1.2.3.4/a.png" srcset="https://img.example.org/a.png 1x, https://img2.example.org/a.png 2x">
+</body></html>
+"""
+
+
+def test_asset_hosts_are_what_a_browser_loads_by_itself():
+    assert _page.asset_hosts(PAGE_HTML, "https://store.steampowered.com/") == [
+        "store.fastly.steamstatic.com",
+        "shared.fastly.steamstatic.com",
+        "store.steampowered.com",
+        "cdn.fastly.steamstatic.com",
+        "img.example.org",
+        "img2.example.org",
+    ]
+
+
+@pytest.mark.parametrize(
+    "host, family",
+    [
+        ("store.fastly.steamstatic.com", "steamstatic.com"),
+        ("medium.com", "medium.com"),
+        ("static.example.com.vn", "example.com.vn"),
+        ("www.example.co.uk", "example.co.uk"),
+        ("a.b.example.io", "example.io"),
+    ],
+)
+def test_registrable(host, family):
+    assert _page.registrable(host) == family
+
+
+def _fake_page(monkeypatch, html, dead=(), final_url="https://store.steampowered.com/"):
+    seen = []
+
+    def reachable(name, timeout=6.0):
+        seen.append(name)
+        return name not in dead
+
+    monkeypatch.setattr(_page, "fetch", lambda host, proxy=None, timeout=6.0: (final_url, html))
+    monkeypatch.setattr(_probe, "reachable", reachable)
+    return seen
+
+
+def test_blocked_hosts_keeps_only_what_fails_and_is_not_covered(monkeypatch):
+    dead = {"store.fastly.steamstatic.com", "cdn.fastly.steamstatic.com", "steampowered.com"}
+    seen = _fake_page(monkeypatch, PAGE_HTML, dead)
+    blocked = _page.blocked_hosts("store.steampowered.com", None, ["example.org"])
+    assert blocked == ["store.fastly.steamstatic.com", "cdn.fastly.steamstatic.com", "steampowered.com"]
+    # The host itself and what the bypass already covers read as blocked over a raw socket, so they are not asked.
+    assert "store.steampowered.com" not in seen and "img.example.org" not in seen
+
+
+def test_reachable_ignores_a_bogus_answer_and_tries_each_address(monkeypatch):
+    monkeypatch.setattr(_dns, "system_resolve", lambda host: ["127.0.0.1", "1.2.3.4", "5.6.7.8"])
+    monkeypatch.setattr(_probe, "tls_probe", lambda ip, sni, timeout=6.0: _probe_row(ip, tls=ip == "5.6.7.8"))
+    assert _probe.reachable("example.org")
+    monkeypatch.setattr(_dns, "system_resolve", lambda host: ["127.0.0.1"])
+    assert not _probe.reachable("example.org")
+    monkeypatch.setattr(_dns, "system_resolve", lambda host: None)
+    assert not _probe.reachable("example.org")
+
+
+def _fake_macos_bypass(monkeypatch, tmp_path, proxy_fails=()):
+    """A sni-blocked host on macOS; ``ensure`` only records what it was asked to open."""
+    opened = []
+
+    def ensure(*hosts):
+        opened.append(hosts)
+        return {"running": True, "proxy": ["Wi-Fi"]}
+
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    monkeypatch.setattr(_dpi, "is_macos", lambda: True)
+    monkeypatch.setattr(_dpi, "is_admin", lambda: False)
+    monkeypatch.setattr(_probe, "diagnose", lambda host, timeout: {"host": host, "verdict": _probe.SNI_BLOCKED})
+    monkeypatch.setattr(_spoofdpi, "ensure", ensure)
+    monkeypatch.setattr(_spoofdpi, "browser_overrides", lambda: [])
+    monkeypatch.setattr(
+        _probe, "proxy_probe", lambda host, proxy, timeout=6.0: _probe_row(host, tls=host not in proxy_fails)
+    )
+    return opened
+
+
+def test_open_adds_the_domains_a_page_needs_to_the_bypass(monkeypatch, tmp_path):
+    opened = _fake_macos_bypass(monkeypatch, tmp_path)
+    _fake_page(monkeypatch, PAGE_HTML, {"store.fastly.steamstatic.com", "cdn.fastly.steamstatic.com"})
+    result = CliRunner().invoke(cli, ["route", "open", "store.steampowered.com"])
+    assert result.exit_code == 0, result.output
+    assert opened == [("store.steampowered.com",), ("steamstatic.com",)]
+
+
+def test_open_host_only_never_reads_the_page(monkeypatch, tmp_path):
+    opened = _fake_macos_bypass(monkeypatch, tmp_path)
+    seen = _fake_page(monkeypatch, PAGE_HTML, {"store.fastly.steamstatic.com"})
+    result = CliRunner().invoke(cli, ["route", "open", "store.steampowered.com", "--host-only"])
+    assert result.exit_code == 0, result.output
+    assert opened == [("store.steampowered.com",)]
+    assert seen == []
+
+
+def test_open_says_when_a_page_host_stays_blocked(monkeypatch, tmp_path):
+    _fake_macos_bypass(monkeypatch, tmp_path, proxy_fails={"cdn.fastly.steamstatic.com"})
+    _fake_page(monkeypatch, PAGE_HTML, {"cdn.fastly.steamstatic.com"})
+    result = CliRunner().invoke(cli, ["route", "open", "store.steampowered.com"])
+    assert result.exit_code == 0, result.output
+    assert "Still failing through the bypass" in result.output
+
+
+def test_open_survives_a_page_it_cannot_read(monkeypatch, tmp_path):
+    opened = _fake_macos_bypass(monkeypatch, tmp_path)
+
+    def refuse(host, proxy=None, timeout=6.0):
+        raise OSError("HTTP Error 403: Forbidden")
+
+    monkeypatch.setattr(_page, "fetch", refuse)
+    result = CliRunner().invoke(cli, ["route", "open", "medium.com"])
+    assert result.exit_code == 0, result.output
+    assert opened == [("medium.com",)]
+    assert "unchecked" in result.output
+
+
+def test_open_with_a_pin_reports_the_page_hosts_it_cannot_reach(monkeypatch, tmp_path):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    monkeypatch.setattr(_dpi, "is_admin", lambda: True)
+    monkeypatch.setattr(_hosts, "pin", lambda host, ip: {host: ip})
+    report = {
+        "host": "www.example.org",
+        "verdict": _probe.ADDRESS_BLOCKED,
+        "best": "5.6.7.8",
+        "working": [_probe_row("5.6.7.8", tls=True)],
+    }
+    after = {**report, "verdict": _probe.OPEN}
+    reports = iter([report, after])
+    monkeypatch.setattr(_probe, "diagnose", lambda host, timeout: next(reports))
+    _fake_page(monkeypatch, PAGE_HTML, {"cdn.fastly.steamstatic.com"})
+    result = CliRunner().invoke(cli, ["route", "open", "www.example.org"])
+    assert result.exit_code == 0, result.output
+    assert "cdn.fastly.steamstatic.com" in result.output
 
 
 def test_open_on_linux_names_the_supported_systems(monkeypatch):

@@ -105,6 +105,12 @@ def rank(host, candidates, timeout=6.0):
     return rows
 
 
+def reachable(host, timeout=6.0):
+    """Whether a browser going straight to what the system resolves gets a handshake."""
+    ips = [ip for ip in _dns.system_resolve(host) or [] if not _dns.is_bogus(ip)]
+    return any(tls_probe(ip, host, timeout=timeout)["tls"] for ip in ips)
+
+
 def candidates(answers):
     """The system's own addresses first, since those are what a browser connects to, then every trusted one."""
     system = [ip for ip in answers["system"] or [] if not _dns.is_bogus(ip)]

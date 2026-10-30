@@ -84,12 +84,13 @@ def opened():
         lines = hosts_path().read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
         return []
-    return [line for line in lines if line and not line.startswith(("#", "*."))]
+    return [line for line in lines if line and not line.startswith(("#", "*"))]
 
 
 def _write_hosts(hosts):
     home().mkdir(parents=True, exist_ok=True)
-    lines = [pattern for host in sorted(set(hosts)) for pattern in (host, f"*.{host}")]
+    # `*` stands for one label and `**` for any number: a CDN name like store.fastly.example.com needs the second.
+    lines = [pattern for host in sorted(set(hosts)) for pattern in (host, f"**.{host}")]
     hosts_path().write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
 
 
@@ -310,15 +311,15 @@ def service_state():
     }
 
 
-def ensure(host):
-    """Put ``host`` through the bypass: install SpoofDPI, (re)start its agent, point the system proxy at it."""
+def ensure(*hosts):
+    """Put ``hosts`` through the bypass: install SpoofDPI, (re)start its agent, point the system proxy at it."""
     conflicts = _proxy_conflicts()
     if conflicts:
         raise RuntimeError(f"A proxy is already set on {', '.join(conflicts)}; evo will not replace it.")
     exe = executable() or install()
     home().mkdir(parents=True, exist_ok=True)
     config_path().write_text(CONFIG, encoding="utf-8")
-    _write_hosts([*opened(), host])
+    _write_hosts([*opened(), *hosts])
     if not _start(reload=_write_agent(exe)):
         return service_state()
     set_system_proxy()
