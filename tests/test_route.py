@@ -123,6 +123,52 @@ def test_verdict_unreachable_when_tcp_never_opens():
     assert _probe._verdict(["1.2.3.4"], probes, [], control, False) == _probe.UNREACHABLE
 
 
+def test_verdict_address_blocked_when_only_a_foreign_address_works():
+    probes = [_probe_row("5.6.7.8", tls=True), _probe_row("1.2.3.4", tcp=False)]
+    assert _probe._verdict(["1.2.3.4", "5.6.7.8"], probes, probes[:1], None, False, False) == _probe.ADDRESS_BLOCKED
+
+
+def _fake_network(monkeypatch, system, trusted, live):
+    """Resolvers answer with ``system`` and ``trusted``; only the addresses in ``live`` finish a handshake."""
+    answers = {"system": system, "resolvers": {"doh": trusted}, "trusted": trusted}
+    monkeypatch.setattr(_dns, "gather", lambda host, include_vn=True: answers)
+    tried = []
+
+    def tls_probe(ip, sni, timeout=6.0):
+        tried.append(ip)
+        return _probe_row(ip, tcp=ip in live, tls=ip in live)
+
+    monkeypatch.setattr(_probe, "tls_probe", tls_probe)
+    return tried
+
+
+def test_diagnose_probes_the_address_the_system_uses(monkeypatch):
+    # www.facebook.com, 2026-10: the system answer is a real Meta address that the network drops,
+    # while the one DoH hands out works. Testing only the DoH address read that as open.
+    tried = _fake_network(monkeypatch, ["57.144.64.1"], ["157.240.13.35"], {"157.240.13.35"})
+    report = _probe.diagnose("www.facebook.com")
+    assert "57.144.64.1" in tried
+    assert report["verdict"] == _probe.ADDRESS_BLOCKED
+    assert report["best"] == "157.240.13.35"
+
+
+def test_diagnose_open_when_the_system_address_works(monkeypatch):
+    _fake_network(monkeypatch, ["1.2.3.4"], ["5.6.7.8"], {"1.2.3.4", "5.6.7.8"})
+    assert _probe.diagnose("example.org")["verdict"] == _probe.OPEN
+
+
+def test_diagnose_without_a_system_answer_needs_a_pin(monkeypatch):
+    _fake_network(monkeypatch, None, ["5.6.7.8"], {"5.6.7.8"})
+    assert _probe.diagnose("example.org")["verdict"] == _probe.DNS_POISONED
+
+
+def test_open_pins_a_host_whose_system_address_is_blocked(monkeypatch):
+    _fake_network(monkeypatch, ["57.144.64.1"], ["157.240.13.35"], {"157.240.13.35"})
+    result = CliRunner().invoke(cli, ["route", "open", "www.facebook.com", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Would pin" in result.output and "157.240.13.35" in result.output
+
+
 HOSTS_SAMPLE = "127.0.0.1 localhost\n192.168.1.9 nas.local\n"
 
 

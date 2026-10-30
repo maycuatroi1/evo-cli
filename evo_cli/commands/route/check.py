@@ -24,6 +24,7 @@ EPILOG = Text.from_markup(
 VERDICT_STYLE = {
     _probe.OPEN: "success",
     _probe.DNS_POISONED: "warning",
+    _probe.ADDRESS_BLOCKED: "warning",
     _probe.SNI_BLOCKED: "error",
     _probe.IP_BLOCKED: "error",
     _probe.UNREACHABLE: "error",
@@ -32,6 +33,7 @@ VERDICT_STYLE = {
 ADVICE = {
     _probe.OPEN: "Nothing to do.",
     _probe.DNS_POISONED: "Run `evo route open {host}` to pin the working address, or fix DNS at the source.",
+    _probe.ADDRESS_BLOCKED: "Run `evo route open {host}` to pin the working address.",
     _probe.SNI_BLOCKED: "hosts and DNS cannot help here. Run `evo route open {host}` to bring up the DPI bypass.",
     _probe.IP_BLOCKED: "The address answers TCP but nothing completes - you need a tunnel or VPN.",
     _probe.UNREACHABLE: "No address resolved or answered. Check the name, then your link.",
@@ -92,6 +94,9 @@ def render(report):
         success(f"{host} is reachable. {message}")
     elif verdict == _probe.DNS_POISONED:
         warning(f"DNS hands back a bogus address for {host}, but {report['best']} works. {message}")
+    elif verdict == _probe.ADDRESS_BLOCKED:
+        dead = ", ".join(report["system_ips"])
+        warning(f"{host} resolves to {dead}, which is blocked, but {report['best']} works. {message}")
     else:
         error(f"{host}: {_probe.VERDICT_TEXT[verdict]}. {message}")
 
