@@ -13,6 +13,7 @@ CONTROL_SNI = "example.com"
 
 OPEN = "open"
 DNS_POISONED = "dns-poisoned"
+ADDRESS_BLOCKED = "address-blocked"
 SNI_BLOCKED = "sni-blocked"
 IP_BLOCKED = "ip-blocked"
 UNREACHABLE = "unreachable"
@@ -20,6 +21,7 @@ UNREACHABLE = "unreachable"
 VERDICT_TEXT = {
     OPEN: "reachable - nothing in the way",
     DNS_POISONED: "DNS is poisoned, the route itself is open",
+    ADDRESS_BLOCKED: "the address your system resolves is blocked, another one works",
     SNI_BLOCKED: "DPI blocks the TLS handshake by server name",
     IP_BLOCKED: "the address itself is blocked or dead",
     UNREACHABLE: "no address answers at all",
@@ -103,24 +105,32 @@ def rank(host, candidates, timeout=6.0):
     return rows
 
 
+def candidates(answers):
+    """The system's own addresses first, since those are what a browser connects to, then every trusted one."""
+    system = [ip for ip in answers["system"] or [] if not _dns.is_bogus(ip)]
+    return system + [ip for ip in answers["trusted"] if ip not in system]
+
+
 def diagnose(host, timeout=6.0, include_vn=True):
     answers = _dns.gather(host, include_vn=include_vn)
     system_ips = answers["system"] or []
     trusted = answers["trusted"]
 
-    poisoned = bool(system_ips) and all(_dns.is_bogus(ip) for ip in system_ips)
+    # A name the system cannot resolve at all, while trusted resolvers can, is as dead to a browser as a bogus one.
+    poisoned = (bool(system_ips) and all(_dns.is_bogus(ip) for ip in system_ips)) or (not system_ips and bool(trusted))
     if not poisoned and system_ips and trusted:
         poisoned = not set(system_ips) & set(trusted) and any(_dns.is_bogus(ip) for ip in system_ips)
 
-    candidates = trusted or [ip for ip in system_ips if not _dns.is_bogus(ip)]
-    probes = rank(host, candidates, timeout=timeout) if candidates else []
+    addresses = candidates(answers)
+    probes = rank(host, addresses, timeout=timeout) if addresses else []
     working = [row for row in probes if row["tls"]]
+    system_ok = any(row["ip"] in system_ips for row in working)
 
     control = None
-    if candidates and not working:
-        control = tls_probe(candidates[0], CONTROL_SNI, timeout=timeout)
+    if addresses and not working:
+        control = tls_probe(addresses[0], CONTROL_SNI, timeout=timeout)
 
-    verdict = _verdict(candidates, probes, working, control, poisoned)
+    verdict = _verdict(addresses, probes, working, control, poisoned, system_ok)
 
     return {
         "host": host,
@@ -128,7 +138,7 @@ def diagnose(host, timeout=6.0, include_vn=True):
         "poisoned": poisoned,
         "system_ips": system_ips,
         "answers": answers["resolvers"],
-        "candidates": candidates,
+        "candidates": addresses,
         "probes": probes,
         "working": working,
         "control": control,
@@ -136,11 +146,14 @@ def diagnose(host, timeout=6.0, include_vn=True):
     }
 
 
-def _verdict(candidates, probes, working, control, poisoned):
+def _verdict(candidates, probes, working, control, poisoned, system_ok=True):
     if not candidates:
         return UNREACHABLE
     if working:
-        return DNS_POISONED if poisoned else OPEN
+        if poisoned:
+            return DNS_POISONED
+        # Some address works, but not the one the system hands the browser: the name only opens once it is pinned.
+        return OPEN if system_ok else ADDRESS_BLOCKED
     if control and control["tls"]:
         return SNI_BLOCKED
     if any(row["tcp"] for row in probes):

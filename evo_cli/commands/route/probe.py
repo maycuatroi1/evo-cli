@@ -37,7 +37,7 @@ def probe(host, timeout, show_all, no_vn, as_json):
         with console.status(f"[info]collecting addresses for {host}...[/info]", spinner="dots"):
             answers = _dns.gather(host, include_vn=not no_vn)
 
-        candidates = answers["trusted"] or [ip for ip in (answers["system"] or []) if not _dns.is_bogus(ip)]
+        candidates = _probe.candidates(answers)
         if not candidates:
             error(f"No usable address for {host}.")
             sys.exit(1)
@@ -61,13 +61,13 @@ def probe(host, timeout, show_all, no_vn, as_json):
     table.add_column("time")
     table.add_column("seen from")
 
-    origin = _origin_map(answers["resolvers"])
+    origin = _origin_map({"system": answers["system"], **answers["resolvers"]})
     for row in shown:
         table.add_row(
             row["ip"],
             "[success]ok[/success]" if row["tls"] else "[error]blocked[/error]",
             f"{row['ms']:.0f}ms" if row["ms"] is not None else "-",
-            ", ".join(origin.get(row["ip"], [])) or "[dim]system[/dim]",
+            ", ".join(origin.get(row["ip"], [])),
         )
     console.print()
     console.print(table)

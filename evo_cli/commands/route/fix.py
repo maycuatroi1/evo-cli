@@ -130,7 +130,7 @@ def open_route(host, method, dry_run, timeout):
         if verdict == _probe.OPEN:
             success(f"{host} is already reachable - nothing to do.")
             return report
-        if verdict == _probe.DNS_POISONED:
+        if verdict in (_probe.DNS_POISONED, _probe.ADDRESS_BLOCKED):
             method = "hosts"
         elif verdict == _probe.SNI_BLOCKED:
             method = "dpi"
