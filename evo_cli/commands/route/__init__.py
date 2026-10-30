@@ -15,7 +15,7 @@ edit can touch it.
 
 - `check <host>` - what stands in the way, and which of the two it is
 - `probe <host>` - every address for the name, ranked by what answers
-- `open <host>` - apply the fix the diagnosis calls for
+- `open <host>` - apply the fix the diagnosis calls for, and see to what its page loads
 - `close <host>` - undo it again
 - `status` - which fixes are currently in place
 
