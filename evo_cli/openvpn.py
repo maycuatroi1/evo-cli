@@ -45,6 +45,7 @@ OPTIONS = {
     "connect-retry",
     "connect-retry-max",
     "connect-timeout",
+    "server-poll-timeout",
     "float",
     "tun-mtu",
     "mssfix",
@@ -522,6 +523,30 @@ def auth_commands(line, profile):
     return f'username "Auth" {quote(username)}\npassword "Auth" {quote(password)}\n'
 
 
+def web_auth_url(message):
+    """The sign-in URL of a pending-auth INFOMSG (WEB_AUTH:flags:url or the older OPEN_URL:url), else None."""
+    if message.startswith("WEB_AUTH:"):
+        # No proxy is announced, so flags hold no colon.
+        url = message[9:].partition(":")[2]
+    elif message.startswith("OPEN_URL:"):
+        url = message[9:]
+    else:
+        return None
+    if urlparse(url).scheme != "https" or any(c.isspace() or not c.isprintable() for c in url):
+        raise CredentialError("VPN server sent an unusable sign-in URL.")
+    return url
+
+
+def open_url(url):
+    """Open the sign-in page in the user's browser; the worker runs as the user, never as root."""
+    opener = shutil.which("open" if sys.platform == "darwin" else "xdg-open")
+    if opener:
+        try:
+            subprocess.Popen([opener, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+
+
 def worker(name, timeout):
     """Keep the management channel alive for reauthentication; never persist raw VPN logs."""
     import fcntl
@@ -592,6 +617,10 @@ def worker(name, timeout):
             "--verb",
             "3",
         ]
+        if not uses_credentials(profile["config"]):
+            # With no password to ask for, a server can add a sign-in step only through the browser (Access
+            # Server SAML); announce it, or such a server refuses the client.
+            command += ["--setenv", "IV_SSO", "openurl,webauth"]
         pinned = [] if takes_default_route(profile["config"]) else remotes
         if profile.get("otp_url"):
             pinned = [*pinned, urlparse(profile["otp_url"]).hostname]
@@ -662,6 +691,12 @@ def worker(name, timeout):
                             if stamp.isdigit():
                                 clock = time.strftime("%H:%M:%S", time.localtime(int(stamp)))
                                 log.append(f"{clock}  {rest.partition(',')[2]}")
+                        elif line.startswith(">INFOMSG:"):
+                            url = web_auth_url(line[9:])
+                            if url:
+                                state["auth_url"] = url
+                                publish()
+                                open_url(url)
                         elif line.startswith(">FATAL:"):
                             raise CredentialError("OpenVPN reported a fatal error; check config, TLS and permissions.")
                         elif line.startswith(">STATE:"):
@@ -671,11 +706,18 @@ def worker(name, timeout):
                                 if fields[1] == "CONNECTED" and fields[2] == "SUCCESS":
                                     state["vpn_ip"] = fields[3]
                                     state["since"] = time.time()
+                                    state.pop("auth_url", None)
+                                    state.pop("auth_expires", None)
                                     # Once up, let OpenVPN retry for as long as the network is gone.
                                     deadline = float("inf")
                                 elif fields[1] != "CONNECTED":
                                     state.pop("vpn_ip", None)
                                     state.pop("since", None)
+                                if fields[1] == "AUTH_PENDING":
+                                    # Signing in happens in the browser: allow the time the server gives it.
+                                    wait = int(fields[2]) if fields[2].isdigit() else 300
+                                    deadline = max(deadline, time.monotonic() + wait)
+                                    state["auth_expires"] = time.time() + wait
                                 if fields[1] == "RECONNECTING":
                                     state["reconnects"] = state.get("reconnects", 0) + 1
                                 if fields[1] in ("RECONNECTING", "EXITING"):

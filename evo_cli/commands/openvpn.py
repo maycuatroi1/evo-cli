@@ -392,9 +392,15 @@ def connect(name, timeout, sudo_password_stdin, watch):
     password = ""
     click.echo(f"Connecting {name}; disconnect any external GUI VPN first. System DNS is not modified.")
     deadline = time.monotonic() + timeout + 20
+    shown = None
     try:
         while time.monotonic() < deadline:
             state = _ask(name)
+            if state.get("auth_url") and state["auth_url"] != shown:
+                shown = state["auth_url"]
+                click.echo(f"Sign in to finish connecting (opened in your browser): {shown}")
+            if state.get("auth_expires"):
+                deadline = max(deadline, time.monotonic() + state["auth_expires"] - time.time() + 20)
             if state["state"] == "CONNECTED":
                 click.echo(f"{name}: connected, tunnel IP {state.get('vpn_ip', 'unknown')}")
                 break
