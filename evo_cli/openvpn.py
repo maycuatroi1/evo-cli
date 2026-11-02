@@ -290,6 +290,83 @@ def pin_remotes(command, remotes):
     return ["sh", "-c", script, "sh", *command]
 
 
+# Run by OpenVPN as root (--route-up, --down) from a root-owned copy. It gives each domain a server resolves
+# (pushed "dns server N resolve-domains") an /etc/resolver file naming that server, so macOS sends only those
+# names into the tunnel. Files carry a tag line; a file without this profile's tag is never touched. Values come
+# from the server, so only plain domains and addresses on port 53 are used, and eval sees only digits.
+DNS_HOOK = r"""
+umask 022
+tag={tag}
+dir={directory}
+for f in "$dir"/*; do
+  [ -f "$f" ] && [ "$(head -n 1 "$f")" = "$tag" ] && rm -f "$f"
+done
+if [ "$1" = up ]; then
+  mkdir -p "$dir"
+  for n in $(env | sed -n 's/^dns_server_\([0-9]\{{1,3\}}\)_address_1=.*/\1/p' | sort -n); do
+    servers= m=1
+    while [ $m -le 8 ]; do
+      eval "a=\${{dns_server_${{n}}_address_$m-}} p=\${{dns_server_${{n}}_port_$m-53}}"
+      case $a$p in *[!0-9A-Fa-f:.]*) ;; *) [ -n "$a" ] && [ "$p" = 53 ] && servers="$servers $a" ;; esac
+      m=$((m + 1))
+    done
+    m=1
+    while eval "d=\${{dns_server_${{n}}_resolve_domain_$m-}}"; [ -n "$d" ]; do
+      m=$((m + 1))
+      [ -n "$servers" ] || continue
+      case $d in .*|*.|*..*|*[!A-Za-z0-9.-]*) continue ;; esac
+      [ -e "$dir/$d" ] || printf '%s\n' "$tag" > "$dir/$d"
+      [ "$(head -n 1 "$dir/$d")" = "$tag" ] || continue
+      for a in $servers; do printf 'nameserver %s\n' "$a" >> "$dir/$d"; done
+    done
+  done
+fi
+killall -HUP mDNSResponder 2>/dev/null
+exit 0
+"""
+
+
+def split_dns(command, name, hooks=Path("/var/run"), resolver=Path("/etc/resolver")):
+    """Wrap OpenVPN so the split DNS its server pushes applies while it runs, and is undone however it ends.
+
+    OpenVPN 2.6 leaves pushed DNS to scripts on macOS. The wrapper runs as root: it writes the hook where only
+    root can write (never a user-writable file run as root), lets OpenVPN call it after routes are up and on
+    close, and runs it once more after OpenVPN exits, so a crash leaves no resolver pointing into the tunnel.
+    """
+    hook = shlex.quote(str(hooks / f"evo-openvpn-{session_path(name).name}.sh"))
+    script = DNS_HOOK.format(tag=shlex.quote(f"# evo openvpn {name}"), directory=shlex.quote(str(resolver)))
+    wrapper = "; ".join(
+        [
+            f'rm -f {hook} && (umask 077 && printf "%s" "$1" > {hook}) || exit 1',
+            "shift",
+            # Leftovers of a run that died with its wrapper would send the remote's name into a tunnel not up.
+            f"/bin/sh {hook} down",
+            "trap : HUP INT TERM",
+            '"$@"',
+            "code=$?",
+            f"/bin/sh {hook} down",
+            f"rm -f {hook}",
+            'exit "$code"',
+        ]
+    )
+    hooked = list(command)
+    hooked[hooked.index("--script-security") + 1] = "2"
+    hooked += ["--route-up", f"/bin/sh {hook} up", "--down", f"/bin/sh {hook} down"]
+    return ["sh", "-c", wrapper, "sh", script, *hooked]
+
+
+def sync_proxy_bypass():
+    """On macOS, let the names this VPN resolves skip evo route's proxy; never fatal to the connection."""
+    if sys.platform != "darwin":
+        return
+    try:
+        from evo_cli.commands.route import _spoofdpi
+
+        _spoofdpi.sync_vpn_bypass()
+    except Exception:
+        pass
+
+
 def parse_totp(value):
     value = value.strip()
     settings = {"secret": value, "algorithm": "SHA1", "digits": 6, "period": 30}
@@ -657,6 +734,8 @@ def worker(name, timeout):
             command += ["--setenv", "IV_SSO", "openurl,webauth"]
         if ciphers := data_ciphers(profile["config"]):
             command += ["--data-ciphers", ciphers]
+        if sys.platform == "darwin":
+            command = split_dns(command, name)
         pinned = [] if takes_default_route(profile["config"]) else remotes
         if profile.get("otp_url"):
             pinned = [*pinned, urlparse(profile["otp_url"]).hostname]
@@ -744,6 +823,8 @@ def worker(name, timeout):
                                     state["since"] = time.time()
                                     state.pop("auth_url", None)
                                     state.pop("auth_expires", None)
+                                    # The DNS hook ran before CONNECTED (route-up); its domains now exist.
+                                    sync_proxy_bypass()
                                     # Once up, let OpenVPN retry for as long as the network is gone.
                                     deadline = float("inf")
                                 elif fields[1] != "CONNECTED":
@@ -795,6 +876,8 @@ def worker(name, timeout):
                     "error": "OpenVPN did not exit; inspect processes manually.",
                 }
         publish()
+        # OpenVPN has exited and its DNS hook has removed the domains; the proxy takes them back.
+        sync_proxy_bypass()
         selector.close()
         control.close()
         listener.close()
