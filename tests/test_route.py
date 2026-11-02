@@ -429,7 +429,7 @@ def _fake_macos_bypass(monkeypatch, tmp_path, proxy_fails=()):
     monkeypatch.setattr(_dpi, "is_admin", lambda: False)
     monkeypatch.setattr(_probe, "diagnose", lambda host, timeout: {"host": host, "verdict": _probe.SNI_BLOCKED})
     monkeypatch.setattr(_spoofdpi, "ensure", ensure)
-    monkeypatch.setattr(_spoofdpi, "browser_overrides", lambda: [])
+    monkeypatch.setattr(_spoofdpi, "browser_overrides", list)
     monkeypatch.setattr(
         _probe, "proxy_probe", lambda host, proxy, timeout=6.0: _probe_row(host, tls=host not in proxy_fails)
     )
