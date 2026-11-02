@@ -503,12 +503,26 @@ def quote(value):
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def rejection_reason(line):
+    """The server's text in a Verification Failed notice, for the user; a dynamic challenge keeps only its prompt.
+
+    OpenVPN writes >PASSWORD:Verification Failed: 'Auth' ['REASON'] (the brackets are its own). A CRV1 challenge
+    carries a state ID and the username besides its prompt, so neither is shown.
+    """
+    reason = line.partition("['")[2].rpartition("']")[0]
+    if reason.startswith("CRV1:"):
+        return "dynamic challenge, not supported: " + reason.split(":", 4)[-1]
+    return reason
+
+
 def auth_commands(line, profile):
     # OpenVPN itself caches server-issued session tokens. This notification needs no reply.
     if line.startswith(">PASSWORD:Auth-Token:"):
         return ""
     if "Verification Failed" in line:
-        raise CredentialError("VPN authentication rejected; check password/OTP enrollment before retrying.")
+        reason = rejection_reason(line)
+        detail = f": {reason}" if reason else "; check password/OTP enrollment before retrying"
+        raise CredentialError(f"VPN authentication rejected{detail}.")
     if "Need 'Auth' username/password" not in line:
         raise CredentialError("Unsupported authentication challenge (private-key password or dynamic challenge).")
     username, password = profile.get("username", ""), profile.get("password", "")
@@ -715,7 +729,9 @@ def worker(name, timeout):
                                     state.pop("since", None)
                                 if fields[1] == "AUTH_PENDING":
                                     # Signing in happens in the browser: allow the time the server gives it.
-                                    wait = int(fields[2]) if fields[2].isdigit() else 300
+                                    # "timeout 180" in OpenVPN 2.6, a bare number in older notes.
+                                    wait = fields[2].split()[-1] if fields[2] else ""
+                                    wait = int(wait) if wait.isdigit() else 300
                                     deadline = max(deadline, time.monotonic() + wait)
                                     state["auth_expires"] = time.time() + wait
                                 if fields[1] == "RECONNECTING":

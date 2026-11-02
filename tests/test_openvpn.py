@@ -261,10 +261,23 @@ def test_static_challenge_uses_scrv1_and_fresh_totp(monkeypatch):
     assert "SCRV1:cGFzcw==:NjU0MzIx" in vpn.auth_commands(line, profile)
 
 
-def test_auth_rejection_does_not_retry_or_leak_challenge():
+@pytest.mark.parametrize(
+    "line,shown,hidden",
+    [
+        (">PASSWORD:Verification Failed: 'Auth'", "check password/OTP enrollment", None),
+        (">PASSWORD:Verification Failed: 'Auth' ['SAML user does not match']", ": SAML user does not match.", None),
+        (
+            ">PASSWORD:Verification Failed: 'Auth' ['CRV1:R,E:state-id-secret:dXNlcg==:Enter token PIN']",
+            "dynamic challenge, not supported: Enter token PIN",
+            "state-id-secret",
+        ),
+    ],
+)
+def test_auth_rejection_shows_the_reason_but_not_the_challenge_state(line, shown, hidden):
     with pytest.raises(CredentialError) as exc:
-        vpn.auth_commands(">PASSWORD:Verification Failed: 'Auth' ['sensitive']", {})
-    assert "sensitive" not in str(exc.value)
+        vpn.auth_commands(line, {})
+    assert shown in str(exc.value)
+    assert not hidden or (hidden not in str(exc.value) and "dXNlcg==" not in str(exc.value))
 
 
 def test_auth_token_is_a_notification_not_a_prompt():
@@ -489,7 +502,7 @@ with socket.socket(socket.AF_UNIX) as s:
     held = b'hold off\\n' not in seen
     if sys.argv[2] == 'webauth':
         # Access Server SAML: no password prompt, a browser sign-in instead.
-        s.sendall(b'>STATE:1,AUTH_PENDING,120,,,,,\\n')
+        s.sendall(b'>STATE:1,AUTH_PENDING,timeout 120,,,,,\\n')
         s.sendall(b'>INFOMSG:WEB_AUTH::https://vpn.example/auth/1\\n')
     else:
         auth()
