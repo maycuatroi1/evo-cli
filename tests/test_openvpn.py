@@ -104,6 +104,11 @@ def test_rejects_unsafe_or_external_config(directive):
         vpn.validate_config(CONFIG + directive + "\n")
 
 
+def test_config_accepts_access_server_timing():
+    # OpenVPN Access Server profiles carry server-poll-timeout, an alias of connect-timeout.
+    assert vpn.validate_config(CONFIG + "server-poll-timeout 4\n") == ["vpn.example 1194 udp"]
+
+
 def test_config_accepts_inline_key_without_parsing_it():
     assert vpn.validate_config(CONFIG + "lport 0\n<key>\nPRIVATE SECRET\n</key>\n") == ["vpn.example 1194 udp"]
 
@@ -349,6 +354,26 @@ def test_worker_pins_the_otp_host_even_for_a_full_tunnel(store, monkeypatch):
     assert pinned == [["otp.example"]]
 
 
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("WEB_AUTH::https://vpn.example/a?b=1", "https://vpn.example/a?b=1"),
+        ("WEB_AUTH:external:https://vpn.example/a", "https://vpn.example/a"),
+        ("OPEN_URL:https://vpn.example/a", "https://vpn.example/a"),
+        ("CR_TEXT:E,R:Enter code", None),
+        ("some other notice", None),
+    ],
+)
+def test_web_auth_url(message, expected):
+    assert vpn.web_auth_url(message) == expected
+
+
+@pytest.mark.parametrize("url", ["http://vpn.example/a", "file:///etc/passwd", "https://vpn.example/a b", "-a"])
+def test_web_auth_url_rejects_anything_but_plain_https(url):
+    with pytest.raises(CredentialError):
+        vpn.web_auth_url("WEB_AUTH::" + url)
+
+
 def test_plain_password_escaping_and_no_unrequested_otp():
     text = vpn.auth_commands("Need 'Auth' username/password", {"username": "u", "password": 'p"\\'})
     assert text == 'username "Auth" "u"\npassword "Auth" "p\\"\\\\"\n'
@@ -462,7 +487,12 @@ with socket.socket(socket.AF_UNIX) as s:
     seen = hold()
     assert {b'state on\\n', b'log on\\n', b'bytecount 2\\n'} <= seen
     held = b'hold off\\n' not in seen
-    auth()
+    if sys.argv[2] == 'webauth':
+        # Access Server SAML: no password prompt, a browser sign-in instead.
+        s.sendall(b'>STATE:1,AUTH_PENDING,120,,,,,\\n')
+        s.sendall(b'>INFOMSG:WEB_AUTH::https://vpn.example/auth/1\\n')
+    else:
+        auth()
     if sys.argv[2] == 'fail':
         s.sendall(b\">PASSWORD:Verification Failed: 'Auth'\\n\")
     else:
@@ -480,12 +510,15 @@ with socket.socket(socket.AF_UNIX) as s:
 """
 
 
-@pytest.mark.parametrize("mode", ["ok", "fail", "reconnect"])
+@pytest.mark.parametrize("mode", ["ok", "fail", "reconnect", "webauth"])
 def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatch, mode):
-    fail = mode == "fail"
+    fail, webauth = mode == "fail", mode == "webauth"
+    config = CERT_ONLY if webauth else CONFIG
     vpn.save_profile(
-        "m1", {"config": CONFIG, "username": "test", "password": "password-secret", "totp": vpn.parse_totp(SECRET)}
+        "m1", {"config": config, "username": "test", "password": "password-secret", "totp": vpn.parse_totp(SECRET)}
     )
+    opened = []
+    monkeypatch.setattr(vpn, "open_url", opened.append)
     monkeypatch.setattr(sys, "stdin", io.StringIO("not-a-real-sudo-password\n"))
     monkeypatch.setattr(vpn.os, "geteuid", lambda: 0)
     monkeypatch.setattr(vpn.shutil, "which", lambda _: "/fake/openvpn")
@@ -497,6 +530,8 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
         # A soft restart (ping-restart, connection-reset) must reconnect, not exit.
         assert "--remap-usr1" not in command and "--connect-retry-max" not in command
         assert command[command.index("--ping") + 1] == "10"
+        # Only a profile without a password announces browser sign-in.
+        assert ("IV_SSO" in command) == webauth
         endpoint = command[command.index("--management") + 1]
         return popen([sys.executable, "-c", FAKE_OPENVPN, endpoint, mode], **kwargs)
 
@@ -511,7 +546,7 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
             if state["state"] == "CONNECTED" and (mode != "reconnect" or state.get("reconnects")):
                 assert state["vpn_ip"] == "10.8.0.2"
                 assert state["since"] and (state["bytes_in"], state["bytes_out"]) == (1024, 2048)
-                assert not fail
+                assert not fail and "auth_url" not in state and "auth_expires" not in state
                 if mode == "reconnect":
                     assert state["reconnects"] == 1 and state["last_reason"] == "connection-reset"
                 # Only the newest lines are kept, and a reply larger than one read arrives whole.
@@ -522,6 +557,7 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
             time.sleep(0.05)
         thread.join(5)
         assert not thread.is_alive()
+        assert opened == (["https://vpn.example/auth/1"] if webauth else [])
         assert vpn.request("m1")["state"] == "STOPPED"
         base = vpn.session_path("m1")
         state = json.loads(Path(str(base) + ".json").read_text())
@@ -607,6 +643,27 @@ def test_cert_only_profile_connects_and_lists_without_credentials(store, monkeyp
         line.split()[1]: line.split()[-2] for line in runner.invoke(cli, ["openvpn", "list"]).output.splitlines()[1:3]
     }
     assert rows == {"cert": "cert", "login": "no"}
+
+
+def test_connect_shows_the_sign_in_url_once_and_waits_for_it(store, monkeypatch):
+    vpn.save_profile("sso", {"config": CERT_ONLY})
+    pending = {"state": "AUTH_PENDING", "auth_url": "https://vpn.example/auth/1", "auth_expires": time.time() + 120}
+    states = iter([{"state": "STOPPED"}, pending, pending])
+    monkeypatch.setattr(vpn, "request", lambda name, command="status": next(states, {"state": "CONNECTED"}))
+    monkeypatch.setattr("evo_cli.commands.openvpn.shutil.which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr("evo_cli.commands.openvpn.os.geteuid", lambda: 0)
+
+    class Running:
+        def __init__(self):
+            self.stdin = io.BytesIO()
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("evo_cli.commands.openvpn.subprocess.Popen", lambda command, **_: Running())
+    result = CliRunner().invoke(cli, ["openvpn", "connect", "sso", "--no-watch", "--timeout", "10"])
+    assert result.exit_code == 0, result.output
+    assert result.output.count("https://vpn.example/auth/1") == 1 and "connected" in result.output
 
 
 def test_pick_profile_by_number_single_or_prompt(store, monkeypatch):
