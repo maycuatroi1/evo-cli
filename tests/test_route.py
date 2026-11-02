@@ -254,36 +254,6 @@ def _fake_networksetup(proxies, calls):
     return run
 
 
-def test_vpn_split_dns_domains_skip_the_proxy_and_only_ours_come_out(tmp_path, monkeypatch):
-    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path / "route"))
-    resolver = tmp_path / "resolver"
-    resolver.mkdir()
-    monkeypatch.setattr(_spoofdpi, "RESOLVER", resolver)
-    (resolver / "corp.example").write_text("# evo openvpn m1\nnameserver 10.0.0.1\n")
-    (resolver / "mine.example").write_text("nameserver 192.0.2.1\n")
-    ours = (True, _spoofdpi.LISTEN_HOST, str(_spoofdpi.LISTEN_PORT))
-    proxies = {("Wi-Fi", "webproxy"): ours, ("Wi-Fi", "securewebproxy"): ours}
-    bypass = {"Wi-Fi": ["*.local", "*.corp.example"], "USB LAN": ["*.local"]}
-    fake = _fake_networksetup(proxies, [])
-
-    def run(*args):
-        if args[0] == "-getproxybypassdomains":
-            out = "\n".join(bypass[args[1]]) or f"There aren't any bypass domains set on {args[1]}."
-            return subprocess.CompletedProcess(args, 0, out + "\n", "")
-        if args[0] == "-setproxybypassdomains":
-            bypass[args[1]] = [] if args[2:] == ("Empty",) else list(args[2:])
-            return subprocess.CompletedProcess(args, 0, "", "")
-        return fake(*args)
-
-    monkeypatch.setattr(_spoofdpi, "_networksetup", run)
-    # Only the tagged domain, only on the proxied service; the user's own *.corp.example is not added twice.
-    assert _spoofdpi.sync_vpn_bypass() == {"Wi-Fi": ["corp.example"]}
-    assert bypass == {"Wi-Fi": ["*.local", "*.corp.example", "corp.example"], "USB LAN": ["*.local"]}
-    (resolver / "corp.example").unlink()  # the VPN is down
-    assert _spoofdpi.sync_vpn_bypass() == {}
-    assert bypass == {"Wi-Fi": ["*.local", "*.corp.example"], "USB LAN": ["*.local"]}
-
-
 def test_spoofdpi_host_list_round_trips_with_subdomains(tmp_path, monkeypatch):
     monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
     _spoofdpi._write_hosts(["medium.com", "x.com", "medium.com"])

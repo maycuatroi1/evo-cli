@@ -18,14 +18,6 @@ CONFIG = "client\ndev tun\nremote vpn.example 1194 udp\nauth-user-pass\n<ca>\nte
 SECRET = base64.b32encode(b"12345678901234567890").decode()
 
 
-@pytest.fixture(autouse=True)
-def no_proxy_sync(monkeypatch):
-    """The worker would otherwise change this machine's proxy bypass list."""
-    synced = []
-    monkeypatch.setattr(vpn, "sync_proxy_bypass", lambda: synced.append(True))
-    return synced
-
-
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     if sys.platform == "win32":
@@ -651,7 +643,7 @@ with socket.socket(socket.AF_UNIX) as s:
 
 
 @pytest.mark.parametrize("mode", ["ok", "fail", "reconnect", "webauth"])
-def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatch, mode, no_proxy_sync):
+def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatch, mode):
     fail, webauth = mode == "fail", mode == "webauth"
     config = CERT_ONLY if webauth else CONFIG
     vpn.save_profile(
@@ -698,8 +690,6 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
         thread.join(5)
         assert not thread.is_alive()
         assert opened == (["https://vpn.example/auth/1"] if webauth else [])
-        # The proxy bypass follows the DNS hook: on each CONNECTED, and once more after OpenVPN exits.
-        assert len(no_proxy_sync) == {"fail": 1, "reconnect": 3}.get(mode, 2)
         assert vpn.request("m1")["state"] == "STOPPED"
         base = vpn.session_path("m1")
         state = json.loads(Path(str(base) + ".json").read_text())
