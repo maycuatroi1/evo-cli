@@ -368,6 +368,37 @@ def test_worker_pins_the_otp_host_even_for_a_full_tunnel(store, monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ("", None),
+        ("cipher AES-256-CBC\n", "AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305:AES-256-CBC"),
+        ("cipher AES-256-GCM\n", None),
+        ("cipher AES-256-CBC\ndata-ciphers AES-256-GCM\n", None),
+    ],
+)
+def test_a_profile_cipher_is_offered_after_the_defaults(extra, expected):
+    assert vpn.data_ciphers(CONFIG + extra) == expected
+
+
+def test_worker_passes_the_profile_cipher(store, monkeypatch):
+    vpn.save_profile("m1", {"config": CERT_ONLY + "cipher AES-256-CBC\n"})
+    monkeypatch.setattr(sys, "stdin", io.StringIO("\n"))
+    monkeypatch.setattr(vpn.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(vpn.shutil, "which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr(vpn, "pin_remotes", lambda command, hosts: command)
+    started = []
+
+    def popen(command, **_):
+        started.append(command)
+        raise OSError("stop before running anything")
+
+    monkeypatch.setattr(vpn.subprocess, "Popen", popen)
+    vpn.worker("m1", 10)
+    command = started[0]
+    assert command[command.index("--data-ciphers") + 1].endswith(":AES-256-CBC")
+
+
+@pytest.mark.parametrize(
     "message,expected",
     [
         ("WEB_AUTH::https://vpn.example/a?b=1", "https://vpn.example/a?b=1"),
