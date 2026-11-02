@@ -355,18 +355,6 @@ def split_dns(command, name, hooks=Path("/var/run"), resolver=Path("/etc/resolve
     return ["sh", "-c", wrapper, "sh", script, *hooked]
 
 
-def sync_proxy_bypass():
-    """On macOS, let the names this VPN resolves skip evo route's proxy; never fatal to the connection."""
-    if sys.platform != "darwin":
-        return
-    try:
-        from evo_cli.commands.route import _spoofdpi
-
-        _spoofdpi.sync_vpn_bypass()
-    except Exception:
-        pass
-
-
 def parse_totp(value):
     value = value.strip()
     settings = {"secret": value, "algorithm": "SHA1", "digits": 6, "period": 30}
@@ -823,8 +811,6 @@ def worker(name, timeout):
                                     state["since"] = time.time()
                                     state.pop("auth_url", None)
                                     state.pop("auth_expires", None)
-                                    # The DNS hook ran before CONNECTED (route-up); its domains now exist.
-                                    sync_proxy_bypass()
                                     # Once up, let OpenVPN retry for as long as the network is gone.
                                     deadline = float("inf")
                                 elif fields[1] != "CONNECTED":
@@ -876,8 +862,6 @@ def worker(name, timeout):
                     "error": "OpenVPN did not exit; inspect processes manually.",
                 }
         publish()
-        # OpenVPN has exited and its DNS hook has removed the domains; the proxy takes them back.
-        sync_proxy_bypass()
         selector.close()
         control.close()
         listener.close()
