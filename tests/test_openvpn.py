@@ -18,6 +18,14 @@ CONFIG = "client\ndev tun\nremote vpn.example 1194 udp\nauth-user-pass\n<ca>\nte
 SECRET = base64.b32encode(b"12345678901234567890").decode()
 
 
+@pytest.fixture(autouse=True)
+def no_proxy_sync(monkeypatch):
+    """The worker would otherwise change this machine's proxy bypass list."""
+    synced = []
+    monkeypatch.setattr(vpn, "sync_proxy_bypass", lambda: synced.append(True))
+    return synced
+
+
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     if sys.platform == "win32":
@@ -398,6 +406,94 @@ def test_worker_passes_the_profile_cipher(store, monkeypatch):
     assert command[command.index("--data-ciphers") + 1].endswith(":AES-256-CBC")
 
 
+SPLIT_DNS_ENV = {
+    "dns_server_10_address_1": "10.0.0.1",
+    "dns_server_10_resolve_domain_1": "corp.example",
+    "dns_server_10_resolve_domain_2": "../evil",
+    "dns_server_10_resolve_domain_3": "a b",
+    "dns_server_10_resolve_domain_4": "mine.example",
+    "dns_server_11_address_1": "10.0.0.2",
+    "dns_server_11_resolve_domain_1": "corp.example",
+    "dns_server_12_address_1": "10.0.0.3",
+    "dns_server_12_port_1": "5353",
+    "dns_server_12_resolve_domain_1": "odd.example",
+    "dns_server_13_address_1": "10.0.0.4; touch pwned",
+    "dns_server_13_resolve_domain_1": "bad.example",
+    "dns_server_14_address_1": "10.0.0.5",
+}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell hook")
+def test_dns_hook_writes_split_dns_and_removes_only_its_own(tmp_path):
+    resolver = tmp_path / "resolver"
+    resolver.mkdir()
+    (resolver / "mine.example").write_text("nameserver 192.0.2.1\n")
+    (resolver / "other.example").write_text("# evo openvpn other\nnameserver 192.0.2.2\n")
+    script = vpn.DNS_HOOK.format(tag="'# evo openvpn m1'", directory=str(resolver))
+
+    def hook(stage):
+        env = {"PATH": "/usr/bin:/bin", **SPLIT_DNS_ENV}
+        subprocess.run(["sh", "-c", script, "hook", stage, "utun9", "1420", "init"], env=env, cwd=tmp_path, check=True)
+
+    hook("up")
+    files = {path.name: path.read_text() for path in resolver.iterdir()}
+    # Both servers of a domain, in server order; no file for a bad name, port, address or a server without domains.
+    assert files["corp.example"] == "# evo openvpn m1\nnameserver 10.0.0.1\nnameserver 10.0.0.2\n"
+    assert set(files) == {"corp.example", "mine.example", "other.example"}
+    assert files["mine.example"] == "nameserver 192.0.2.1\n"
+    assert not (tmp_path / "evil").exists() and not (tmp_path / "pwned").exists()
+    hook("up")  # a restart replaces its own files instead of appending to them
+    assert (resolver / "corp.example").read_text().count("nameserver") == 2
+    hook("down")
+    assert sorted(path.name for path in resolver.iterdir()) == ["mine.example", "other.example"]
+
+
+FAKE_HOOKED_OPENVPN = """
+import os, shlex, subprocess, sys
+resolver = sys.argv[1]
+args = sys.argv[2:]
+assert not os.path.exists(os.path.join(resolver, "stale.example")), "leftover not cleared before start"
+assert args[args.index("--script-security") + 1] == "2"
+command = shlex.split(args[args.index("--route-up") + 1]) + ["utun9", "1420", "init"]
+subprocess.run(command, env={**os.environ, "dns_server_10_address_1": "10.0.0.1",
+                             "dns_server_10_resolve_domain_1": "corp.example"}, check=True)
+assert open(os.path.join(resolver, "corp.example")).read().endswith("nameserver 10.0.0.1\\n")
+sys.exit(7)  # dies without running --down
+"""
+
+
+def test_split_dns_wrapper_undoes_everything_when_openvpn_dies(store, tmp_path):
+    hooks, resolver = tmp_path / "run", tmp_path / "resolver"
+    hooks.mkdir()
+    resolver.mkdir()
+    (resolver / "stale.example").write_text("# evo openvpn m1\nnameserver 10.9.9.9\n")
+    command = [sys.executable, "-c", FAKE_HOOKED_OPENVPN, str(resolver), "--script-security", "1", "--verb", "3"]
+    wrapped = vpn.split_dns(command, "m1", hooks=hooks, resolver=resolver)
+    result = subprocess.run(wrapped, capture_output=True, text=True, check=False)
+    assert result.returncode == 7, result.stderr
+    assert list(resolver.iterdir()) == [] and list(hooks.iterdir()) == []
+
+
+@pytest.mark.parametrize("platform,hooked", [("darwin", True), ("linux", False)])
+def test_worker_applies_split_dns_on_macos_only(store, monkeypatch, platform, hooked):
+    vpn.save_profile("m1", {"config": CERT_ONLY})
+    monkeypatch.setattr(sys, "stdin", io.StringIO("\n"))
+    monkeypatch.setattr(vpn.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(vpn.shutil, "which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr(vpn.sys, "platform", platform)
+    monkeypatch.setattr(vpn, "pin_remotes", lambda command, hosts: command)
+    started = []
+
+    def popen(command, **_):
+        started.append(command)
+        raise OSError("stop before running anything")
+
+    monkeypatch.setattr(vpn.subprocess, "Popen", popen)
+    vpn.worker("m1", 10)
+    assert ("--route-up" in started[0]) == hooked
+    assert started[0][started[0].index("--script-security") + 1] == ("2" if hooked else "1")
+
+
 @pytest.mark.parametrize(
     "message,expected",
     [
@@ -555,7 +651,7 @@ with socket.socket(socket.AF_UNIX) as s:
 
 
 @pytest.mark.parametrize("mode", ["ok", "fail", "reconnect", "webauth"])
-def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatch, mode):
+def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatch, mode, no_proxy_sync):
     fail, webauth = mode == "fail", mode == "webauth"
     config = CERT_ONLY if webauth else CONFIG
     vpn.save_profile(
@@ -602,6 +698,8 @@ def test_worker_real_sockets_auth_status_shutdown_without_root(store, monkeypatc
         thread.join(5)
         assert not thread.is_alive()
         assert opened == (["https://vpn.example/auth/1"] if webauth else [])
+        # The proxy bypass follows the DNS hook: on each CONNECTED, and once more after OpenVPN exits.
+        assert len(no_proxy_sync) == {"fail": 1, "reconnect": 3}.get(mode, 2)
         assert vpn.request("m1")["state"] == "STOPPED"
         base = vpn.session_path("m1")
         state = json.loads(Path(str(base) + ".json").read_text())

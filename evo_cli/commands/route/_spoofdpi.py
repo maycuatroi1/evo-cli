@@ -3,9 +3,10 @@
 GoodbyeDPI has no macOS build. SpoofDPI is a local HTTP proxy that splits the
 TLS ClientHello, so the filter never reads the server name in one piece. It only
 does that for the hosts `evo route open` named: every other name passes through
-untouched and resolves with the system resolver, so names only a VPN knows keep
-working. The named hosts resolve over DoH instead, because a name the filter
-blocks usually has its DNS answer poisoned too.
+untouched and resolves with the system's DNS server. The named hosts resolve over
+DoH instead, because a name the filter blocks usually has its DNS answer poisoned
+too. SpoofDPI's resolver never reads /etc/resolver, so names a connected evo VPN
+resolves through split DNS skip the proxy altogether (`sync_vpn_bypass`).
 """
 
 from __future__ import annotations
@@ -45,6 +46,10 @@ match = {{ domains = ["file:hosts.txt"] }}
 dns = {{ mode = "https", cache = true }}
 https = {{ skip = false, split-mode = "{SPLIT_MODE}" }}
 """
+
+# The evo openvpn DNS hook starts each /etc/resolver file it writes with this tag.
+RESOLVER = Path("/etc/resolver")
+VPN_TAG = "# evo openvpn "
 
 # networksetup names both proxies by these words: -getwebproxy, -setsecurewebproxystate, ...
 PROXY_KINDS = ("webproxy", "securewebproxy")
@@ -258,6 +263,56 @@ def clear_system_proxy():
     return cleared
 
 
+def vpn_domains():
+    """Domains a connected evo VPN resolves with its own DNS: its tagged files under /etc/resolver."""
+    domains = []
+    for path in sorted(RESOLVER.glob("*")):
+        try:
+            with path.open(encoding="utf-8") as handle:
+                tagged = handle.readline().startswith(VPN_TAG)
+        except (OSError, UnicodeDecodeError):
+            continue
+        if tagged:
+            domains.append(path.name)
+    return domains
+
+
+def _bypass(service):
+    lines = _networksetup("-getproxybypassdomains", service).stdout.splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.startswith("There aren't any")]
+
+
+def sync_vpn_bypass():
+    """Let the names a connected evo VPN resolves skip the proxy, and take them out again once it is down.
+
+    SpoofDPI would ask the system's DNS server for them and fail. Each service whose proxy is ours bypasses those
+    domains; what this added is recorded per service, so only that comes out again and a user's entries stay.
+    """
+    record = home() / "vpn-bypass.json"
+    try:
+        added = json.loads(record.read_text())
+    except (OSError, ValueError):
+        added = {}
+    wanted = [entry for domain in vpn_domains() for entry in (domain, f"*.{domain}")]
+    proxied = proxied_services()
+    now = {}
+    for service in network_services():
+        mine = added.get(service, [])
+        if not mine and service not in proxied:
+            continue
+        current = _bypass(service)
+        kept = [entry for entry in current if entry not in mine]
+        new = [entry for entry in wanted if entry not in kept] if service in proxied else []
+        if kept + new != current:
+            _networksetup("-setproxybypassdomains", service, *(kept + new or ["Empty"]))
+        if new:
+            now[service] = new
+    if now or added:
+        home().mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps(now))
+    return now
+
+
 def _extension_name(profile, ext_id):
     for path in sorted((profile / "Extensions" / ext_id).glob("*/manifest.json")):
         try:
@@ -323,6 +378,7 @@ def ensure(*hosts):
     if not _start(reload=_write_agent(exe)):
         return service_state()
     set_system_proxy()
+    sync_vpn_bypass()
     return service_state()
 
 
@@ -339,6 +395,7 @@ def forget(host):
 def remove():
     """Clear the system proxy first, so nothing points at a proxy that is gone, then stop and drop the agent."""
     clear_system_proxy()
+    sync_vpn_bypass()
     _launchctl("bootout", f"{_domain()}/{LABEL}")
     agent_path().unlink(missing_ok=True)
     hosts_path().unlink(missing_ok=True)

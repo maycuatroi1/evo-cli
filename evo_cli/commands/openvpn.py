@@ -390,7 +390,12 @@ def connect(name, timeout, sudo_password_stdin, watch):
     process.stdin.write((password + "\n").encode())
     process.stdin.close()
     password = ""
-    click.echo(f"Connecting {name}; disconnect any external GUI VPN first. System DNS is not modified.")
+    dns = (
+        "Names the server resolves (split DNS) go to its DNS while connected; other DNS is unchanged."
+        if sys.platform == "darwin"
+        else "System DNS is not modified."
+    )
+    click.echo(f"Connecting {name}; disconnect any external GUI VPN first. {dns}")
     deadline = time.monotonic() + timeout + 20
     shown = None
     try:
