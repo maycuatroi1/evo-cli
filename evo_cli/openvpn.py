@@ -23,6 +23,8 @@ from urllib.parse import parse_qs, urlparse
 from evo_cli.credentials.store import CredentialError, compile_flat, read_flat, set_value
 
 APP = Path("/Applications/OpenVPN Connect/OpenVPN Connect.app/Contents/MacOS/OpenVPN Connect")
+# OpenVPN 2.6's default --data-ciphers.
+DATA_CIPHERS = ("AES-256-GCM", "AES-128-GCM", "CHACHA20-POLY1305")
 INLINE = {"ca", "cert", "key", "tls-auth", "tls-crypt", "tls-crypt-v2", "extra-certs"}
 # Only self-contained client profiles: never execute scripts/plugins or follow includes as root.
 OPTIONS = {
@@ -182,6 +184,24 @@ def validate_config(text):
 def uses_credentials(text):
     """Whether OpenVPN will ask for a username and password; a certificate-only profile never does."""
     return any(words[0].removeprefix("--") == "auth-user-pass" for _, words in _directives(text))
+
+
+def data_ciphers(text):
+    """The --data-ciphers to pass for a profile that names only --cipher, else None.
+
+    OpenVPN 2.5 and Connect offer that cipher too; 2.6 no longer does, so a server that accepts nothing else
+    (Access Server profiles carry "cipher AES-256-CBC") ends with "no shared cipher". The defaults stay first.
+    """
+    cipher = None
+    for _, words in _directives(text):
+        option = words[0].removeprefix("--")
+        if option == "data-ciphers":
+            return None
+        if option == "cipher" and len(words) == 2:
+            cipher = words[1]
+    if not cipher or cipher.upper() in DATA_CIPHERS:
+        return None
+    return ":".join([*DATA_CIPHERS, cipher])
 
 
 def takes_default_route(text):
@@ -635,6 +655,8 @@ def worker(name, timeout):
             # With no password to ask for, a server can add a sign-in step only through the browser (Access
             # Server SAML); announce it, or such a server refuses the client.
             command += ["--setenv", "IV_SSO", "openurl,webauth"]
+        if ciphers := data_ciphers(profile["config"]):
+            command += ["--data-ciphers", ciphers]
         pinned = [] if takes_default_route(profile["config"]) else remotes
         if profile.get("otp_url"):
             pinned = [*pinned, urlparse(profile["otp_url"]).hostname]
