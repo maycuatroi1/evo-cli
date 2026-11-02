@@ -81,6 +81,34 @@ def get(key_path, export_var):
         sys.stdout.write("\n")
 
 
+def _key_paths(node, prefix=""):
+    for key, value in node.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict) and value:
+            yield from _key_paths(value, path)
+        else:
+            yield path
+
+
+@cred_group.command("keys", help="List dotted key paths in the store, never their values.")
+@click.argument("pattern", required=False)
+@click.option("--json", "as_json", is_flag=True, help="Print the paths as a JSON list.")
+def keys(pattern, as_json):
+    flat = _guard(read_flat)
+    flat.pop("_generated", None)
+    paths = list(_key_paths(flat))
+    if pattern:
+        paths = [path for path in paths if pattern.lower() in path.lower()]
+        if not paths:
+            raise click.ClickException(f"no key path contains '{pattern}'")
+
+    if as_json:
+        sys.stdout.write(json.dumps(paths) + "\n")
+        return
+    for path in paths:
+        sys.stdout.write(path + "\n")
+
+
 @cred_group.command("list", help="List every credential in the store with its health.")
 def list_credentials():
     _guard(require_folder)

@@ -41,7 +41,7 @@ def _write(store, rel, entry):
 
 def test_cred_command_is_registered():
     assert "cred" in cli.commands
-    for name in ("get", "list", "doctor", "compile", "add", "auth", "refresh", "migrate", "sync", "path"):
+    for name in ("get", "keys", "list", "doctor", "compile", "add", "auth", "refresh", "migrate", "sync", "path"):
         assert name in cli.commands["cred"].commands
     assert set(cli.commands["cred"].commands["sync"].commands) == {"push", "pull"}
 
@@ -111,6 +111,54 @@ def test_get_command_missing_key_fails(store):
 
     assert result.exit_code != 0
     assert "key not found: nope.deeper" in result.output
+
+
+def _write_secrets(store):
+    _write(store, "ai/openai.json", {"id": "openai", "flat": {"openai_api_key": "sk-live-123"}})
+    _write(
+        store,
+        "net/mikrotik.json",
+        {"id": "mikrotik", "flat": {"ialab_network": {"username": "admin-user", "password": "pw-456"}}},
+    )
+    compile_flat()
+
+
+def test_keys_lists_every_path_and_no_value(store):
+    _write_secrets(store)
+
+    result = CliRunner().invoke(cli, ["cred", "keys"])
+
+    assert result.exit_code == 0
+    assert result.output.split() == ["openai_api_key", "ialab_network.username", "ialab_network.password"]
+    for value in ("sk-live-123", "admin-user", "pw-456"):
+        assert value not in result.output
+
+
+def test_keys_filters_case_insensitively(store):
+    _write_secrets(store)
+
+    result = CliRunner().invoke(cli, ["cred", "keys", "NETWORK"])
+
+    assert result.exit_code == 0
+    assert result.output == "ialab_network.username\nialab_network.password\n"
+
+
+def test_keys_json_form(store):
+    _write_secrets(store)
+
+    result = CliRunner().invoke(cli, ["cred", "keys", "openai", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.output) == ["openai_api_key"]
+
+
+def test_keys_no_match_fails(store):
+    _write_secrets(store)
+
+    result = CliRunner().invoke(cli, ["cred", "keys", "nothing-like-this"])
+
+    assert result.exit_code != 0
+    assert "no key path contains 'nothing-like-this'" in result.output
 
 
 def test_set_value_routes_known_key_to_its_spec_file(store):
