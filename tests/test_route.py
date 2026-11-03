@@ -272,7 +272,7 @@ def test_spoofdpi_config_bypasses_only_the_opened_hosts():
     assert 'mode = "system"' in _spoofdpi.CONFIG
     assert "skip = true" in _spoofdpi.CONFIG
     assert '"file:hosts.txt"' in _spoofdpi.CONFIG
-    assert 'split-mode = "first-byte"' in _spoofdpi.CONFIG
+    assert 'split-mode = "chunk", chunk-size = 16' in _spoofdpi.CONFIG
 
 
 def test_network_services_skip_the_header_and_disabled_ones(monkeypatch):
