@@ -26,10 +26,13 @@ LISTEN_HOST = "127.0.0.1"
 # Off 8080, where development servers live.
 LISTEN_PORT = 18080
 
-# `first-byte` cuts the TLS record header off the rest of the ClientHello, and the
-# filter does not put the two back together. SpoofDPI's default `sni` split, which
-# cuts inside the server name, still gets the handshake reset (medium.com, 2026-10).
-SPLIT_MODE = "first-byte"
+# `chunk` cuts the whole ClientHello into small pieces. SpoofDPI's default `sni`
+# split, which cuts inside the server name, gets the handshake reset (medium.com,
+# 2026-10), and since 2026-11 so does `first-byte`, which only cuts the record
+# header off (www.youtube.com, store.steampowered.com). Chunks of 1 to 64 bytes
+# got through, 128 did not, so this keeps well under that.
+SPLIT_MODE = "chunk"
+CHUNK_SIZE = 16
 
 CONFIG = f"""# Written by `evo route open`; the hosts it opened are listed in hosts.txt.
 [dns]
@@ -43,7 +46,7 @@ name = "evo route open"
 priority = 50
 match = {{ domains = ["file:hosts.txt"] }}
 dns = {{ mode = "https", cache = true }}
-https = {{ skip = false, split-mode = "{SPLIT_MODE}" }}
+https = {{ skip = false, split-mode = "{SPLIT_MODE}", chunk-size = {CHUNK_SIZE} }}
 """
 
 # networksetup names both proxies by these words: -getwebproxy, -setsecurewebproxystate, ...
