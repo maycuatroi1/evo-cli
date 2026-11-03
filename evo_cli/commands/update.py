@@ -25,6 +25,7 @@ VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)(?:[-_.]?(dev|alpha|a|beta|b|rc|c|pr
 PRE_RANK = {"dev": -4, "alpha": -3, "a": -3, "beta": -2, "b": -2, "pre": -1, "rc": -1, "c": -1}
 
 EXACT_PIN_RE = re.compile(r"^===?\s*([^\s,*]+)$")
+CLAUSE_RE = re.compile(r"^(===|==|!=|~=|>=|<=|>|<)\s*([^\s*]+)$")
 PLAIN_RECEIPT_KEYS = {"requirements", "python", "entrypoints", "options"}
 PLAIN_REQUIREMENT_KEYS = {"name", "extras", "specifier"}
 
@@ -178,6 +179,32 @@ def exact_pin(requirement):
     return match.group(1) if match else None
 
 
+def admits(specifier, version):
+    """Whether every clause of ``specifier`` lets ``version`` in; None for a clause this cannot read (wildcards)."""
+    target = parse_version(version)
+    for clause in filter(None, (part.strip() for part in str(specifier).split(","))):
+        match = CLAUSE_RE.match(clause)
+        if not match:
+            return None
+        op, bound = match.group(1), parse_version(match.group(2))
+        if op == "~=":
+            prefix = bound[0][:-1]
+            ok = target >= bound and target[0][: len(prefix)] == prefix
+        else:
+            ok = {
+                "==": target == bound,
+                "===": target == bound,
+                "!=": target != bound,
+                ">=": target >= bound,
+                "<=": target <= bound,
+                ">": target > bound,
+                "<": target < bound,
+            }[op]
+        if not ok:
+            return False
+    return True
+
+
 def requirement_text(requirement, specifier):
     extras = requirement.get("extras") or []
     name = requirement["name"] + (f"[{','.join(extras)}]" if extras else "")
@@ -232,7 +259,9 @@ def build_commands(install, latest, allow_pre):
         reinstall = uv_reinstall_command(install["location"], latest, allow_pre)
         if reinstall:
             return [reinstall]
-        cmd = ["uv", "tool", "upgrade", target]
+        # Right after a release uv still answers from its cached index and finds nothing to upgrade.
+        # `tool upgrade` has no --refresh-package; --reinstall-package implies it.
+        cmd = ["uv", "tool", "upgrade", "--reinstall-package", TOOL_NAME, target]
         if allow_pre:
             cmd.append("--prerelease=allow")
         return [cmd]
@@ -281,7 +310,7 @@ def stale_hint(install, latest):
         _, requirement = uv_receipt(location)
         specifier = (requirement or {}).get("specifier")
         fix = f"uv tool install --force --refresh-package {TOOL_NAME} '{TOOL_NAME}>={latest}'"
-        if specifier:
+        if specifier and admits(specifier, latest) is not True:
             receipt = Path(location) / "uv-receipt.toml"
             return (
                 f"{receipt} pins {TOOL_NAME}{specifier}, which `uv tool upgrade` keeps. "

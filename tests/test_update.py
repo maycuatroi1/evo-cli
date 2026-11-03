@@ -6,6 +6,8 @@ from click.testing import CliRunner
 from evo_cli.cli import cli
 from evo_cli.commands import update as update_command
 
+UV_UPGRADE = ["uv", "tool", "upgrade", "--reinstall-package", "evo-cli", "evo_cli"]
+
 
 def _result(returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
@@ -189,7 +191,7 @@ def test_uv_upgrade_held_by_a_pin_it_cannot_rebuild_fails_with_the_fix(monkeypat
     output = _flat(result.output)
 
     assert result.exit_code == 1
-    assert ran == [["uv", "tool", "upgrade", "evo_cli"]]
+    assert ran == [UV_UPGRADE]
     assert "evo updated" not in result.output
     assert "evo is still at 0.31.0, not 0.31.1" in output
     assert "pins evo-cli==0.31.0" in output
@@ -205,8 +207,35 @@ def test_uv_upgrade_without_a_pin_skips_the_reinstall(monkeypatch, tmp_path):
     result = CliRunner().invoke(cli, ["update"])
 
     assert result.exit_code == 0, result.output
-    assert ran == [["uv", "tool", "upgrade", "evo_cli"]]
+    assert ran == [UV_UPGRADE]
     assert "evo updated to 0.31.1" in result.output
+
+
+def test_uv_upgrade_held_by_a_stale_index_does_not_blame_a_floor(monkeypatch, tmp_path):
+    """A receipt's `>=` floor lets the release in, so the cached index is what held it back."""
+    _stub_pypi(monkeypatch, ["0.36.0", "0.36.1"])
+    monkeypatch.setattr(update_command, "__version__", "0.36.0")
+    _uv_install(monkeypatch, tmp_path, '[tool]\nrequirements = [{ name = "evo-cli", specifier = ">=0.31.2" }]\n')
+    ran = _stub_installer(monkeypatch, "0.36.0")
+
+    result = CliRunner().invoke(cli, ["update"])
+    output = _flat(result.output)
+
+    assert result.exit_code == 1
+    assert ran == [UV_UPGRADE]
+    assert "pins" not in output
+    assert "cached package index" in output
+    assert "uv tool install --force --refresh-package evo-cli 'evo-cli>=0.36.1'" in output
+
+
+def test_admits_reads_each_clause_of_a_specifier():
+    assert update_command.admits(">=0.31.2", "0.36.1") is True
+    assert update_command.admits(">=0.31.2,<0.36", "0.36.1") is False
+    assert update_command.admits("==0.36.0", "0.36.1") is False
+    assert update_command.admits("!=0.36.0", "0.36.1") is True
+    assert update_command.admits("~=0.36.0", "0.36.1") is True
+    assert update_command.admits("~=0.35.0", "0.36.1") is False
+    assert update_command.admits("==0.36.*", "0.36.1") is None
 
 
 def test_editable_update_pulls_and_reports_head(monkeypatch, tmp_path):
