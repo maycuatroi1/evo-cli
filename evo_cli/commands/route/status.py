@@ -70,6 +70,8 @@ def status(as_json):
         console.print(f"  [dim]{dpi['args']}[/dim]")
     if dpi.get("hosts"):
         info(f"Hosts: {', '.join(dpi['hosts'])} - remove with `evo route close <host>`")
+    if dpi.get("hosts") and dpi.get("dns") in _spoofdpi.RESOLVERS:
+        info(f"They resolve with {_spoofdpi.RESOLVERS[dpi['dns']]}, re-picked on every change of network")
     if dpi.get("proxy"):
         info(f"System proxy set on {', '.join(dpi['proxy'])}")
 
