@@ -76,6 +76,11 @@ def _apply_spoofdpi(host, dry_run):
         error(f"SpoofDPI would not start - see {_spoofdpi.log_path()}")
         sys.exit(1)
     success(f"DPI bypass is running on {_spoofdpi.listen()}, system proxy set on {', '.join(state['proxy'])}")
+    if state.get("dns") == "system":
+        info(
+            f"{_spoofdpi.DOH_URL} does not answer on this network, so the opened hosts resolve with the system "
+            "resolver; evo switches them back to DoH on a network where it answers"
+        )
     return state
 
 

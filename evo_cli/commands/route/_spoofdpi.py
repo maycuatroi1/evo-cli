@@ -5,23 +5,32 @@ TLS ClientHello, so the filter never reads the server name in one piece. It only
 does that for the hosts `evo route open` named: every other name passes through
 untouched and resolves with the system's DNS server (SpoofDPI's own resolver,
 which does not read /etc/resolver). The named hosts resolve over DoH instead,
-because a name the filter blocks usually has its DNS answer poisoned too.
+because a name the filter blocks usually has its DNS answer poisoned too, except
+on a network where the DoH endpoint does not answer: see `dns_mode`.
 """
 
 from __future__ import annotations
 
+import base64
+import http.client
 import json
 import os
 import plistlib
+import re
 import shutil
 import socket
+import struct
 import subprocess
+import sys
 import time
+import urllib.request
 from pathlib import Path
 
+from evo_cli.commands.route import _dns
 from evo_cli.console import info, run_command
 
 LABEL = "com.evo.route.spoofdpi"
+DNS_LABEL = "com.evo.route.dns"
 LISTEN_HOST = "127.0.0.1"
 # Off 8080, where development servers live.
 LISTEN_PORT = 18080
@@ -34,7 +43,25 @@ LISTEN_PORT = 18080
 SPLIT_MODE = "chunk"
 CHUNK_SIZE = 16
 
-CONFIG = f"""# Written by `evo route open`; the hosts it opened are listed in hosts.txt.
+# SpoofDPI asks this one DoH endpoint and has no fallback, so a network that blocks
+# it (an office network that keeps DNS to its own resolver, 2026-11) fails every
+# opened host with a 502. There the opened hosts use the system's resolver.
+DOH_URL = "https://dns.google/dns-query"
+# SpoofDPI gives a whole lookup 3 seconds.
+DOH_TIMEOUT = 2.5
+# Resolves on any network that is up, the way macOS checks for a captive portal.
+ONLINE_PROBE = "captive.apple.com"
+RESOLVERS = {"https": f"DoH ({DOH_URL})", "system": "the system resolver"}
+
+# macOS rewrites this file on every change of network.
+DNS_SETTINGS = "/var/run/resolv.conf"
+# Catches a network that was not answering yet when its settings arrived.
+DNS_RECHECK_SECONDS = 120
+
+
+def config(dns_mode):
+    """SpoofDPI's config, with the opened hosts resolving by ``dns_mode``: "https" or "system"."""
+    return f"""# Written by `evo route open`; the hosts it opened are listed in hosts.txt.
 [dns]
 mode = "system"
 
@@ -45,9 +72,10 @@ skip = true
 name = "evo route open"
 priority = 50
 match = {{ domains = ["file:hosts.txt"] }}
-dns = {{ mode = "https", cache = true }}
+dns = {{ mode = "{dns_mode}", https-url = "{DOH_URL}", cache = true }}
 https = {{ skip = false, split-mode = "{SPLIT_MODE}", chunk-size = {CHUNK_SIZE} }}
 """
+
 
 # networksetup names both proxies by these words: -getwebproxy, -setsecurewebproxystate, ...
 PROXY_KINDS = ("webproxy", "securewebproxy")
@@ -69,12 +97,16 @@ def hosts_path():
     return home() / "hosts.txt"
 
 
-def agent_path():
-    return Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+def agent_path(label=LABEL):
+    return Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
 
 
 def log_path():
     return Path.home() / "Library" / "Logs" / "evo-route-spoofdpi.log"
+
+
+def dns_log_path():
+    return Path.home() / "Library" / "Logs" / "evo-route-dns.log"
 
 
 def listen():
@@ -126,25 +158,31 @@ def _program(exe):
     return [exe, "--config", str(config_path()), "--no-tui", "--listen-addr", listen()]
 
 
-def _write_agent(exe):
-    """Write the LaunchAgent; True when its content changed."""
-    plist = plistlib.dumps(
-        {
-            "Label": LABEL,
-            "ProgramArguments": _program(exe),
-            "RunAtLoad": True,
-            "KeepAlive": True,
-            "StandardOutPath": str(log_path()),
-            "StandardErrorPath": str(log_path()),
-        }
-    )
-    path = agent_path()
+def _write_plist(label, job, log):
+    """Write a LaunchAgent; True when its content changed."""
+    plist = plistlib.dumps({"Label": label, **job, "StandardOutPath": str(log), "StandardErrorPath": str(log)})
+    path = agent_path(label)
     if path.exists() and path.read_bytes() == plist:
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
-    log_path().parent.mkdir(parents=True, exist_ok=True)
+    log.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(plist)
     return True
+
+
+def _write_agent(exe):
+    return _write_plist(LABEL, {"ProgramArguments": _program(exe), "RunAtLoad": True, "KeepAlive": True}, log_path())
+
+
+def _write_dns_agent():
+    """The agent that runs `refresh` with this Python whenever the network changes, and every few minutes."""
+    job = {
+        "ProgramArguments": [sys.executable, "-m", "evo_cli.commands.route._dnswatch"],
+        "RunAtLoad": True,
+        "WatchPaths": [DNS_SETTINGS],
+        "StartInterval": DNS_RECHECK_SECONDS,
+    }
+    return _write_plist(DNS_LABEL, job, dns_log_path())
 
 
 def _launchctl(*args):
@@ -155,8 +193,8 @@ def _domain():
     return f"gui/{os.getuid()}"
 
 
-def _loaded():
-    return _launchctl("print", f"{_domain()}/{LABEL}").returncode == 0
+def _loaded(label=LABEL):
+    return _launchctl("print", f"{_domain()}/{label}").returncode == 0
 
 
 def _listening(timeout=0.5):
@@ -302,6 +340,86 @@ def browser_overrides(support=None):
     return found
 
 
+def _doh_answers():
+    """Whether DOH_URL answers from this network, asked as SpoofDPI asks it: straight, never through a proxy."""
+    question = struct.pack(">HHHHHH", 0, 0x0100, 1, 0, 0, 0) + _dns._encode_qname(ONLINE_PROBE)
+    question += struct.pack(">HH", 1, 1)
+    query = base64.urlsafe_b64encode(question).rstrip(b"=").decode()
+    request = urllib.request.Request(f"{DOH_URL}?dns={query}", headers={"accept": "application/dns-message"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=DOH_TIMEOUT) as response:
+            reply = response.read()
+    except (OSError, ValueError, http.client.HTTPException):
+        return False
+    # RCODE 0: the endpoint read the question and answered it.
+    return len(reply) >= 12 and reply[3] & 0x0F == 0
+
+
+def _online():
+    try:
+        socket.getaddrinfo(ONLINE_PROBE, 80, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    return True
+
+
+def dns_mode():
+    """How the opened hosts should resolve on the network the Mac is on now.
+
+    Over DoH where its endpoint answers, since a blocked name is often a poisoned one too. With the system
+    resolver where it does not, which is the resolver such a network means to be used. None while nothing
+    answers at all, offline or before the network is up, when there is nothing to choose between.
+    """
+    if _doh_answers():
+        return "https"
+    return "system" if _online() else None
+
+
+def current_dns_mode():
+    """How the opened hosts resolve in the config SpoofDPI runs with; None before evo wrote one."""
+    try:
+        text = config_path().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    found = re.search(r'^dns = \{ mode = "(\w+)"', text, re.MULTILINE)
+    return found.group(1) if found else None
+
+
+def _write_config(dns_mode):
+    """Write SpoofDPI's config; True when its content changed."""
+    text = config(dns_mode)
+    path = config_path()
+    if path.exists() and path.read_text(encoding="utf-8") == text:
+        return False
+    home().mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
+def refresh():
+    """Resolve the opened hosts the way the current network allows; restart SpoofDPI only when that changes.
+
+    The DNS agent runs this on every change of network. Returns the mode in use, None while the bypass is off.
+    """
+    if not opened() or not _loaded():
+        return None
+    mode = dns_mode()
+    if mode is None:
+        return current_dns_mode()
+    if _write_config(mode):
+        _start(reload=False)
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} opened hosts now resolve with {RESOLVERS[mode]}", flush=True)
+    return mode
+
+
+def _watch_network():
+    """(Re)load the DNS agent; launchd runs it once on load, then on every change of network."""
+    if _write_dns_agent() or not _loaded(DNS_LABEL):
+        _launchctl("bootout", f"{_domain()}/{DNS_LABEL}")
+        _launchctl("bootstrap", _domain(), str(agent_path(DNS_LABEL)))
+
+
 def service_state():
     exe = executable()
     return {
@@ -311,6 +429,7 @@ def service_state():
         "reason": None,
         "hosts": opened(),
         "proxy": proxied_services(),
+        "dns": current_dns_mode(),
     }
 
 
@@ -320,11 +439,11 @@ def ensure(*hosts):
     if conflicts:
         raise RuntimeError(f"A proxy is already set on {', '.join(conflicts)}; evo will not replace it.")
     exe = executable() or install()
-    home().mkdir(parents=True, exist_ok=True)
-    config_path().write_text(CONFIG, encoding="utf-8")
+    _write_config(dns_mode() or current_dns_mode() or "https")
     _write_hosts([*opened(), *hosts])
     if not _start(reload=_write_agent(exe)):
         return service_state()
+    _watch_network()
     set_system_proxy()
     return service_state()
 
@@ -342,7 +461,8 @@ def forget(host):
 def remove():
     """Clear the system proxy first, so nothing points at a proxy that is gone, then stop and drop the agent."""
     clear_system_proxy()
-    _launchctl("bootout", f"{_domain()}/{LABEL}")
-    agent_path().unlink(missing_ok=True)
+    for label in (DNS_LABEL, LABEL):
+        _launchctl("bootout", f"{_domain()}/{label}")
+        agent_path(label).unlink(missing_ok=True)
     hosts_path().unlink(missing_ok=True)
     return True

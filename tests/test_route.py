@@ -269,10 +269,153 @@ def test_spoofdpi_reads_a_host_list_from_before_the_double_star(tmp_path, monkey
 
 def test_spoofdpi_config_bypasses_only_the_opened_hosts():
     """Every other name goes straight through, so names only a VPN resolves keep working."""
-    assert 'mode = "system"' in _spoofdpi.CONFIG
-    assert "skip = true" in _spoofdpi.CONFIG
-    assert '"file:hosts.txt"' in _spoofdpi.CONFIG
-    assert 'split-mode = "chunk", chunk-size = 16' in _spoofdpi.CONFIG
+    config = _spoofdpi.config("https")
+    assert '[dns]\nmode = "system"' in config
+    assert "skip = true" in config
+    assert '"file:hosts.txt"' in config
+    assert 'split-mode = "chunk", chunk-size = 16' in config
+
+
+@pytest.mark.parametrize("mode", ["https", "system"])
+def test_spoofdpi_config_round_trips_how_the_opened_hosts_resolve(tmp_path, monkeypatch, mode):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    assert _spoofdpi.current_dns_mode() is None
+    assert _spoofdpi._write_config(mode)
+    assert f'https-url = "{_spoofdpi.DOH_URL}"' in (tmp_path / "spoofdpi.toml").read_text()
+    assert _spoofdpi.current_dns_mode() == mode
+    assert not _spoofdpi._write_config(mode)
+
+
+def test_spoofdpi_reads_the_dns_mode_of_a_config_from_before_the_fallback(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    (tmp_path / "spoofdpi.toml").write_text(
+        '[dns]\nmode = "system"\n\n[[rules]]\ndns = { mode = "https", cache = true }\n'
+    )
+    assert _spoofdpi.current_dns_mode() == "https"
+
+
+class _Reply:
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self.body
+
+
+def _fake_opener(monkeypatch, outcome, seen):
+    class Opener:
+        def open(self, request, timeout):
+            seen.append((request.full_url, request.get_header("Accept"), timeout))
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _Reply(outcome)
+
+    def build_opener(*handlers):
+        seen.append([type(handler).__name__ for handler in handlers])
+        return Opener()
+
+    monkeypatch.setattr(_spoofdpi.urllib.request, "build_opener", build_opener)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "answers"),
+    [
+        (struct.pack(">HHHHHH", 0, 0x8180, 1, 1, 0, 0), True),
+        (struct.pack(">HHHHHH", 0, 0x8185, 1, 0, 0, 0), False),
+        (b"<html>blocked</html>", False),
+        (TimeoutError("timed out"), False),
+    ],
+)
+def test_doh_probe_asks_straight_and_wants_a_dns_answer(monkeypatch, outcome, answers):
+    seen = []
+    _fake_opener(monkeypatch, outcome, seen)
+    assert _spoofdpi._doh_answers() is answers
+    assert seen[0] == ["ProxyHandler"]
+    url, accept, timeout = seen[1]
+    assert url.startswith(f"{_spoofdpi.DOH_URL}?dns=")
+    assert accept == "application/dns-message"
+    assert timeout < 3
+
+
+@pytest.mark.parametrize(
+    ("doh", "online", "mode"),
+    [(True, True, "https"), (True, False, "https"), (False, True, "system"), (False, False, None)],
+)
+def test_dns_mode_falls_back_to_the_system_resolver_only_while_online(monkeypatch, doh, online, mode):
+    monkeypatch.setattr(_spoofdpi, "_doh_answers", lambda: doh)
+    monkeypatch.setattr(_spoofdpi, "_online", lambda: online)
+    assert _spoofdpi.dns_mode() == mode
+
+
+def _bypass_running(tmp_path, monkeypatch, mode, starts):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    _spoofdpi._write_hosts(["youtube.com"])
+    _spoofdpi._write_config("https")
+    monkeypatch.setattr(_spoofdpi, "_loaded", lambda label=_spoofdpi.LABEL: True)
+    monkeypatch.setattr(_spoofdpi, "_start", lambda reload: starts.append(reload) or True)
+    monkeypatch.setattr(_spoofdpi, "dns_mode", lambda: mode)
+
+
+def test_refresh_switches_to_the_system_resolver_where_doh_is_blocked(tmp_path, monkeypatch, capsys):
+    starts = []
+    _bypass_running(tmp_path, monkeypatch, "system", starts)
+    assert _spoofdpi.refresh() == "system"
+    assert _spoofdpi.current_dns_mode() == "system"
+    assert starts == [False]
+    assert "the system resolver" in capsys.readouterr().out
+
+
+def test_refresh_leaves_spoofdpi_alone_when_nothing_changed(tmp_path, monkeypatch):
+    starts = []
+    _bypass_running(tmp_path, monkeypatch, "https", starts)
+    assert _spoofdpi.refresh() == "https"
+    assert starts == []
+
+
+def test_refresh_keeps_the_config_while_offline(tmp_path, monkeypatch):
+    starts = []
+    _bypass_running(tmp_path, monkeypatch, None, starts)
+    assert _spoofdpi.refresh() == "https"
+    assert starts == []
+
+
+def test_refresh_does_nothing_while_the_bypass_is_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    monkeypatch.setattr(_spoofdpi, "dns_mode", lambda: pytest.fail("probed with the bypass off"))
+    assert _spoofdpi.refresh() is None
+
+
+def test_dns_agent_runs_the_watch_module_on_every_network_change(tmp_path, monkeypatch):
+    import importlib.util
+    import plistlib
+
+    monkeypatch.setattr(_spoofdpi.Path, "home", lambda: tmp_path)
+    assert _spoofdpi._write_dns_agent()
+    job = plistlib.loads(_spoofdpi.agent_path(_spoofdpi.DNS_LABEL).read_bytes())
+    assert job["Label"] == _spoofdpi.DNS_LABEL
+    assert job["ProgramArguments"][1:] == ["-m", "evo_cli.commands.route._dnswatch"]
+    assert importlib.util.find_spec(job["ProgramArguments"][2]) is not None
+    assert job["WatchPaths"] == ["/var/run/resolv.conf"]
+    assert "KeepAlive" not in job
+    assert not _spoofdpi._write_dns_agent()
+
+
+def test_remove_drops_the_dns_agent_too(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
+    monkeypatch.setattr(_spoofdpi.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(_spoofdpi, "clear_system_proxy", list)
+    calls = []
+    monkeypatch.setattr(_spoofdpi, "_launchctl", lambda *args: calls.append(args))
+    _spoofdpi._write_dns_agent()
+    _spoofdpi.remove()
+    assert [call[1].rsplit("/", 1)[1] for call in calls] == [_spoofdpi.DNS_LABEL, _spoofdpi.LABEL]
+    assert not _spoofdpi.agent_path(_spoofdpi.DNS_LABEL).exists()
 
 
 def test_network_services_skip_the_header_and_disabled_ones(monkeypatch):
