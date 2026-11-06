@@ -2,10 +2,12 @@ import datetime
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -30,6 +32,13 @@ CONTAINERS = ["mp4", "mkv", "webm", "auto"]
 BROWSERS = ["chrome", "edge", "firefox", "brave", "chromium", "opera", "vivaldi", "safari"]
 JS_RUNTIMES = ["deno", "bun", "node"]
 YTDLP_STALE_DAYS = 60
+# The `default` extra pulls in yt-dlp-ejs, the script yt-dlp runs to solve
+# YouTube's JS challenges. Without it YouTube hands back images only, even with
+# node or deno on PATH.
+YTDLP_PACKAGE = "yt-dlp[default]"
+# pip writes this two-line shebang instead of `#!<python>` when the interpreter
+# path has spaces or is too long for the kernel.
+PIP_SH_SHEBANG = re.compile(r"^'''exec' (?:\"([^\"]+)\"|(\S+))")
 # Codecs an MP4 is actually expected to carry. Facebook reels and YouTube serve
 # their best streams as VP9 / AV1, and muxing those into MP4 gives a file that
 # QuickTime, Photos and iMovie open with sound but a black picture - the picture
@@ -346,8 +355,95 @@ def find_js_runtime():
     return None, None
 
 
+def script_interpreter(exe):
+    """The Python a pip-installed `yt-dlp` script runs on, or None for a standalone build.
+
+    `evo download` runs whichever yt-dlp is first on PATH, which is rarely the
+    Python evo itself lives in (a uv tool venv with no pip), so updates have to
+    go to the interpreter that owns this script.
+    """
+    path = Path(os.path.realpath(exe))
+    if os.name == "nt":
+        for folder in (path.parent, path.parent.parent):
+            candidate = folder / "python.exe"
+            if candidate.is_file():
+                return str(candidate)
+        return None
+    # The official Unix release is a zipapp with `#!/usr/bin/env python3`: the
+    # shebang names a Python, but that Python does not own it.
+    if not path.is_file() or zipfile.is_zipfile(path):
+        return None
+    try:
+        with open(path, "rb") as handle:
+            head = [handle.readline(1024).decode("utf-8", "replace").strip() for _ in range(2)]
+    except OSError:
+        return None
+    if not head[0].startswith("#!"):
+        return None
+    parts = head[0][2:].split()
+    if not parts:
+        return None
+    if parts[0] == "/bin/sh":
+        match = PIP_SH_SHEBANG.match(head[1])
+        return (match.group(1) or match.group(2)) if match else None
+    if Path(parts[0]).name == "env":
+        return shutil.which(parts[1]) if len(parts) > 1 else None
+    return parts[0]
+
+
+def has_pip(python):
+    try:
+        result = subprocess.run([python, "-m", "pip", "--version"], capture_output=True, check=False)
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def pip_install_command(python):
+    """How to install YTDLP_PACKAGE into `python`, or None when nothing can."""
+    uv = shutil.which("uv")
+    venv = Path(python).parent.parent
+    if uv and venv.name == "yt-dlp" and (venv / "uv-receipt.toml").is_file():
+        # A `uv tool install yt-dlp` venv: go through uv tool so the receipt
+        # keeps the extra and a later `uv tool upgrade` does not drop it.
+        return [uv, "tool", "install", "--upgrade", YTDLP_PACKAGE]
+    if has_pip(python):
+        return [python, "-m", "pip", "install", "-U", YTDLP_PACKAGE]
+    if uv:
+        return [uv, "pip", "install", "--python", python, "-U", YTDLP_PACKAGE]
+    return None
+
+
+def ytdlp_install_command():
+    """The command that installs or updates the yt-dlp `evo download` runs."""
+    cmd = ytdlp_command()
+    if cmd is None:
+        uv = shutil.which("uv")
+        if uv:
+            return [uv, "tool", "install", "--upgrade", YTDLP_PACKAGE]
+        if has_pip(sys.executable):
+            return [sys.executable, "-m", "pip", "install", "-U", YTDLP_PACKAGE]
+        return None
+    if cmd[0] == sys.executable and cmd[1:] == ["-m", "yt_dlp"]:
+        return pip_install_command(sys.executable)
+    exe = cmd[0]
+    brew = shutil.which("brew")
+    if brew and "/Cellar/yt-dlp/" in os.path.realpath(exe).replace(os.sep, "/"):
+        return [brew, "upgrade", "yt-dlp"]
+    python = script_interpreter(exe)
+    if python is None:
+        return [exe, "-U"]
+    return pip_install_command(python)
+
+
 def install_ytdlp():
-    run_command([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"], status="Installing yt-dlp")
+    cmd = ytdlp_install_command()
+    if cmd is None:
+        raise click.ClickException(
+            "No pip or uv to install yt-dlp with. Install uv (https://docs.astral.sh/uv/), "
+            f'then run: uv tool install "{YTDLP_PACKAGE}"'
+        )
+    run_command(cmd, status="Installing yt-dlp")
 
 
 def detect_package_manager():
@@ -385,12 +481,14 @@ def ensure_ytdlp(assume_yes=False):
         warn_if_stale()
         return cmd
     warning("yt-dlp is not installed.")
-    if not assume_yes and not click.confirm("Install yt-dlp now with pip?", default=True):
-        raise click.ClickException("yt-dlp is required. Install it with: pip install -U yt-dlp")
+    if not assume_yes and not click.confirm("Install yt-dlp now?", default=True):
+        raise click.ClickException(f'yt-dlp is required. Install it with: uv tool install "{YTDLP_PACKAGE}"')
     install_ytdlp()
     cmd = ytdlp_command()
     if not cmd:
-        raise click.ClickException("yt-dlp was installed but could not be found. Check your PATH.")
+        raise click.ClickException(
+            "yt-dlp was installed but is not on PATH. Run `uv tool update-shell`, open a new terminal, try again."
+        )
     return cmd
 
 
@@ -878,7 +976,10 @@ def formats_cmd(url, cookies, assume_yes):
     "install",
     context_settings={"help_option_names": ["-h", "--help"]},
     help=(
-        "Install or update **yt-dlp** (via pip).\n\n"
+        "Install or update **yt-dlp**, with yt-dlp-ejs for YouTube's JS challenges.\n\n"
+        "It updates the copy `evo download` runs, where it was installed from: pip, "
+        "uv tool, Homebrew or a standalone build. With none on PATH it installs one "
+        "with `uv tool install`.\n\n"
         "With `--with-deps` it also installs **ffmpeg** using whichever package manager "
         "it detects (apt, dnf, pacman, brew, winget, choco)."
     ),

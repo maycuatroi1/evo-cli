@@ -1,5 +1,8 @@
 import datetime
+import os
 import subprocess
+import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -434,3 +437,127 @@ def test_failure_on_fresh_ytdlp_keeps_the_formats_hint(monkeypatch, tmp_path):
     result = CliRunner().invoke(cli, ["download", YOUTUBE, "-o", str(tmp_path)])
     assert result.exit_code != 0
     assert "evo download formats" in result.output.replace("\n", "")
+
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="shebang scripts are a POSIX install layout")
+PKG = dl.YTDLP_PACKAGE
+
+
+def fake_which(monkeypatch, **tools):
+    # A plain dict lookup, so other callers of shutil.which cannot use it up.
+    monkeypatch.setattr(dl.shutil, "which", lambda name: tools.get(name))
+
+
+def write_script(path, first_lines):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(first_lines + "import sys\nfrom yt_dlp import main\n")
+    return path
+
+
+def test_install_pulls_in_the_js_challenge_solver():
+    assert PKG == "yt-dlp[default]"
+
+
+@posix_only
+def test_install_targets_the_python_that_owns_the_path_ytdlp(monkeypatch, tmp_path):
+    script = write_script(tmp_path / "bin" / "yt-dlp", "#!/opt/anaconda3/bin/python\n")
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: [str(script)])
+    monkeypatch.setattr(dl, "has_pip", lambda python: python == "/opt/anaconda3/bin/python")
+    fake_which(monkeypatch, uv="/u/uv")
+    assert dl.ytdlp_install_command() == ["/opt/anaconda3/bin/python", "-m", "pip", "install", "-U", PKG]
+
+
+@posix_only
+def test_install_reads_the_sh_shebang_pip_writes_for_long_paths(monkeypatch, tmp_path):
+    python = "/Users/me/My Envs/yt/bin/python"
+    quotes = "'" * 3
+    shebang = f'#!/bin/sh\n{quotes}exec\' "{python}" "$0" "$@"\n\' {quotes}\n'
+    script = write_script(tmp_path / "yt-dlp", shebang)
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: [str(script)])
+    monkeypatch.setattr(dl, "has_pip", lambda p: p == python)
+    fake_which(monkeypatch)
+    assert dl.ytdlp_install_command() == [python, "-m", "pip", "install", "-U", PKG]
+
+
+def test_install_into_a_venv_without_pip_goes_through_uv(monkeypatch):
+    # evo as a uv tool: its venv has yt_dlp importable but no pip.
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: [sys.executable, "-m", "yt_dlp"])
+    monkeypatch.setattr(dl, "has_pip", lambda python: False)
+    fake_which(monkeypatch, uv="/u/uv")
+    assert dl.ytdlp_install_command() == ["/u/uv", "pip", "install", "--python", sys.executable, "-U", PKG]
+
+
+@posix_only
+def test_install_updates_a_uv_tool_ytdlp_through_uv_tool(monkeypatch, tmp_path):
+    venv = tmp_path / "tools" / "yt-dlp"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "uv-receipt.toml").write_text('[tool]\nrequirements = [{ name = "yt-dlp" }]\n')
+    script = write_script(venv / "bin" / "yt-dlp", f"#!{venv / 'bin' / 'python'}\n")
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: [str(script)])
+    monkeypatch.setattr(dl, "has_pip", lambda python: pytest.fail("uv tool venvs are updated by uv"))
+    fake_which(monkeypatch, uv="/u/uv")
+    assert dl.ytdlp_install_command() == ["/u/uv", "tool", "install", "--upgrade", PKG]
+
+
+@posix_only
+def test_install_upgrades_a_homebrew_ytdlp_with_brew(monkeypatch, tmp_path):
+    real = write_script(tmp_path / "Cellar" / "yt-dlp" / "2026.10.26" / "bin" / "yt-dlp", "#!/x/libexec/bin/python\n")
+    link = tmp_path / "bin" / "yt-dlp"
+    link.parent.mkdir()
+    link.symlink_to(real)
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: [str(link)])
+    fake_which(monkeypatch, brew="/opt/homebrew/bin/brew", uv="/u/uv")
+    assert dl.ytdlp_install_command() == ["/opt/homebrew/bin/brew", "upgrade", "yt-dlp"]
+
+
+def test_install_self_updates_a_standalone_binary(monkeypatch, tmp_path):
+    exe = tmp_path / "yt-dlp"
+    exe.write_bytes(b"\x7fELF\x02\x01\x01" + b"\x00" * 64)
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: [str(exe)])
+    fake_which(monkeypatch, uv="/u/uv")
+    assert dl.ytdlp_install_command() == [str(exe), "-U"]
+
+
+@posix_only
+def test_install_self_updates_the_zipapp_release(monkeypatch, tmp_path):
+    exe = tmp_path / "yt-dlp"
+    with open(exe, "wb") as handle:
+        handle.write(b"#!/usr/bin/env python3\n")
+        with zipfile.ZipFile(handle, "w") as archive:
+            archive.writestr("__main__.py", "print('hi')\n")
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: [str(exe)])
+    fake_which(monkeypatch, python3="/usr/bin/python3", uv="/u/uv")
+    assert dl.ytdlp_install_command() == [str(exe), "-U"]
+
+
+def test_missing_ytdlp_is_installed_as_a_uv_tool(monkeypatch):
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: None)
+    fake_which(monkeypatch, uv="/u/uv")
+    assert dl.ytdlp_install_command() == ["/u/uv", "tool", "install", "--upgrade", PKG]
+
+
+def test_missing_ytdlp_without_uv_falls_back_to_pip(monkeypatch):
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: None)
+    monkeypatch.setattr(dl, "has_pip", lambda python: True)
+    fake_which(monkeypatch)
+    assert dl.ytdlp_install_command() == [sys.executable, "-m", "pip", "install", "-U", PKG]
+
+
+def test_install_without_pip_or_uv_says_how(monkeypatch):
+    monkeypatch.setattr(dl, "ytdlp_command", lambda: None)
+    monkeypatch.setattr(dl, "has_pip", lambda python: False)
+    fake_which(monkeypatch)
+    result = CliRunner().invoke(cli, ["download", "install"])
+    assert result.exit_code != 0
+    assert "uv tool install" in result.output
+
+
+def test_install_command_runs_what_it_resolved(monkeypatch):
+    ran = []
+    monkeypatch.setattr(dl, "ytdlp_install_command", lambda: ["/u/uv", "tool", "install", "--upgrade", PKG])
+    monkeypatch.setattr(dl, "run_command", lambda cmd, **kw: ran.append(cmd))
+    monkeypatch.setattr(dl, "report_environment", lambda: None)
+    monkeypatch.setattr(dl, "ytdlp_version", lambda: "2026.10.26")
+    result = CliRunner().invoke(cli, ["download", "install"])
+    assert result.exit_code == 0, result.output
+    assert ran == [["/u/uv", "tool", "install", "--upgrade", PKG]]
