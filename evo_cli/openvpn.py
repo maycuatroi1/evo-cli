@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -245,14 +246,62 @@ def default_gateway():
 
 def gateway_to(address):
     """The gateway ``address`` is routed through now, or None when it is on-link or the lookup fails."""
+    if sys.platform == "darwin":
+        command, pattern = ["route", "-n", "get", address], r"gateway:\s*(\S+)"
+    else:
+        command, pattern = ["ip", "-4", "route", "get", address], r"\bvia\s+(\S+)"
     try:
-        output = subprocess.run(
-            ["route", "-n", "get", address], capture_output=True, text=True, timeout=5, check=False
-        ).stdout
+        output = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False).stdout
     except (OSError, subprocess.TimeoutExpired):
         return None
-    match = re.search(r"gateway:\s*(\S+)", output)
+    match = re.search(pattern, output)
     return match.group(1) if match else None
+
+
+BYPASS_PORT = 443
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+
+
+def parse_bypass(value):
+    """A host to keep off the tunnel while the LAN reaches it: "host" or "host:port" (the port its probe uses)."""
+    host, colon, port = value.strip().lower().partition(":")
+    if colon and not (port.isdigit() and 0 < int(port) < 65536):
+        raise CredentialError(f"Invalid port in '{value}'.")
+    if len(host) > 253 or not re.fullmatch(rf"{_LABEL}(?:\.{_LABEL})*", host):
+        raise CredentialError(f"'{value}' is not a host name or IPv4 address.")
+    return f"{host}:{int(port)}" if colon and int(port) != BYPASS_PORT else host
+
+
+def lan_bypass(entries, timeout=1.5):
+    """The addresses of ``entries`` that the LAN reaches now through the physical gateway, to pin there.
+
+    Called before OpenVPN starts, so a probe that answers went over the LAN. On a network that reaches the
+    host by itself (inside the network the VPN leads to), a pushed route would only send it into a tunnel
+    that may not carry it. Elsewhere the probe fails and the host goes through the VPN as before. Names
+    resolve now, with the system's DNS; an address that changes during the session is not followed.
+    """
+    gateway = default_gateway() if entries else None
+    if not gateway:
+        return []
+    targets = []
+    for entry in entries:
+        host, _, port = parse_bypass(entry).partition(":")
+        for address in remote_addresses([host]):
+            if (address, int(port or BYPASS_PORT)) not in targets:
+                targets.append((address, int(port or BYPASS_PORT)))
+
+    def answers(target):
+        if gateway_to(target[0]) != gateway:
+            return False
+        try:
+            with socket.create_connection(target, timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        reached = list(pool.map(answers, targets))
+    return list(dict.fromkeys(address for (address, _), ok in zip(targets, reached) if ok))
 
 
 def lan_resolvers(path="/var/run/resolv.conf"):
@@ -770,6 +819,9 @@ def worker(name, timeout):
             pinned = [*pinned, urlparse(profile["otp_url"]).hostname]
         if sys.platform == "darwin":
             pinned = [*pinned, *lan_resolvers()]
+        if bypass := lan_bypass(profile.get("bypass") or []):
+            log.append(f"{time.strftime('%H:%M:%S')}  evo: kept on the LAN: {', '.join(bypass)}")
+            pinned = [*pinned, *bypass]
         if pinned:
             command = pin_remotes(command, pinned)
         if os.geteuid() != 0:
