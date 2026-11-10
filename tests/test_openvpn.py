@@ -27,6 +27,8 @@ def store(tmp_path, monkeypatch):
     # Keep Unix socket paths below the macOS 104-byte limit.
     import tempfile
 
+    # The worker reads this machine's DNS servers on macOS; tests that need some set their own.
+    monkeypatch.setattr(vpn, "lan_resolvers", list)
     with tempfile.TemporaryDirectory(prefix="evpn-", dir="/tmp") as runtime:
         monkeypatch.setenv("EVO_OPENVPN_HOME", runtime)
         yield tmp_path
@@ -199,6 +201,62 @@ def test_split_tunnel_pins_its_server_around_openvpn(tmp_path, monkeypatch, plat
     assert subprocess.run(command, cwd=tmp_path, env=env, check=False).returncode == 3
     assert log.read_text().splitlines() == expected
     assert not (tmp_path / "pwned").exists()
+
+
+@pytest.mark.parametrize(
+    "output,gateway",
+    [
+        ("   route to: 192.0.2.53\n    gateway: 192.0.2.1\n  interface: en0\n", "192.0.2.1"),
+        # On-link: no gateway line.
+        ("   route to: 198.51.100.1\n  interface: en0\n      flags: <UP,HOST,DONE,LLINFO>\n", None),
+        ("", None),
+    ],
+)
+def test_gateway_to_reads_the_route(monkeypatch, output, gateway):
+    monkeypatch.setattr(vpn.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, output, ""))
+    assert vpn.gateway_to("192.0.2.53") == gateway
+
+
+def test_lan_resolvers_are_the_dns_servers_behind_the_gateway(tmp_path, monkeypatch):
+    conf = tmp_path / "resolv.conf"
+    conf.write_text(
+        "# comment\nsearch example\n"
+        "nameserver 192.0.2.53\n"  # behind the gateway: a pushed route could take it
+        "nameserver 198.51.100.1\n"  # on-link
+        "nameserver 203.0.113.9\n"  # already behind another gateway (a tunnel)
+        "nameserver 127.0.0.1\nnameserver 169.254.1.1\nnameserver fe80::1%en0\nnameserver\n"
+        "nameserver 192.0.2.53\n"
+    )
+    routes = {"192.0.2.53": "192.0.2.1", "203.0.113.9": "10.8.0.1"}
+    asked = []
+    monkeypatch.setattr(vpn, "gateway_to", lambda address: asked.append(address) or routes.get(address))
+    monkeypatch.setattr(vpn, "default_gateway", lambda: "192.0.2.1")
+    assert vpn.lan_resolvers(conf) == ["192.0.2.53"]
+    assert "127.0.0.1" not in asked and "169.254.1.1" not in asked
+    assert vpn.lan_resolvers(tmp_path / "missing") == []
+    # No physical gateway (the default route is a tunnel's): nothing to pin to.
+    monkeypatch.setattr(vpn, "default_gateway", lambda: None)
+    assert vpn.lan_resolvers(conf) == []
+
+
+@pytest.mark.parametrize("platform,pinned", [("darwin", [["192.0.2.53"]]), ("linux", [])])
+def test_worker_pins_the_lan_resolvers_on_macos(store, monkeypatch, platform, pinned):
+    # A full-tunnel profile pins nothing of its own, so only the resolvers show.
+    vpn.save_profile("m1", {"config": CERT_ONLY})
+    monkeypatch.setattr(sys, "stdin", io.StringIO("\n"))
+    monkeypatch.setattr(vpn.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(vpn.shutil, "which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr(vpn.sys, "platform", platform)
+    monkeypatch.setattr(vpn, "lan_resolvers", lambda: ["192.0.2.53"])
+    seen = []
+    monkeypatch.setattr(vpn, "pin_remotes", lambda command, hosts: seen.append(hosts) or command)
+
+    def popen(command, **_):
+        raise OSError("stop before running anything")
+
+    monkeypatch.setattr(vpn.subprocess, "Popen", popen)
+    vpn.worker("m1", 10)
+    assert seen == pinned
 
 
 def test_no_pin_without_a_physical_gateway_or_address(monkeypatch):

@@ -243,6 +243,47 @@ def default_gateway():
         return None
 
 
+def gateway_to(address):
+    """The gateway ``address`` is routed through now, or None when it is on-link or the lookup fails."""
+    try:
+        output = subprocess.run(
+            ["route", "-n", "get", address], capture_output=True, text=True, timeout=5, check=False
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(r"gateway:\s*(\S+)", output)
+    return match.group(1) if match else None
+
+
+def lan_resolvers(path="/var/run/resolv.conf"):
+    """The system's DNS servers that are reached through the physical gateway (macOS).
+
+    mDNSResponder sends each query out of the interface its server came from, so the system's own lookups
+    still work when a VPN pushes a route that covers the LAN's DNS server. A program with its own resolver
+    reads this file and follows the routing table instead, into a tunnel that does not answer: SpoofDPI
+    behind `evo route` then fails every name, and the browser shows ERR_TUNNEL_CONNECTION_FAILED. Pinning
+    these servers to the gateway keeps such resolvers where mDNSResponder already is. On-link servers need
+    no pin: a pushed route is never more specific than the link's own.
+    """
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError:
+        return []
+    candidates = []
+    for line in lines:
+        words = line.split()
+        if len(words) < 2 or words[0] != "nameserver":
+            continue
+        try:
+            address = ipaddress.IPv4Address(words[1])
+        except ValueError:
+            continue
+        if not (address.is_loopback or address.is_link_local) and str(address) not in candidates:
+            candidates.append(str(address))
+    gateway = default_gateway() if candidates else None
+    return [address for address in candidates if gateway and gateway_to(address) == gateway]
+
+
 def remote_addresses(remotes):
     """IPv4 addresses of the profile's servers, resolved just before OpenVPN resolves them itself."""
     addresses = []
@@ -727,6 +768,8 @@ def worker(name, timeout):
         pinned = [] if takes_default_route(profile["config"]) else remotes
         if profile.get("otp_url"):
             pinned = [*pinned, urlparse(profile["otp_url"]).hostname]
+        if sys.platform == "darwin":
+            pinned = [*pinned, *lan_resolvers()]
         if pinned:
             command = pin_remotes(command, pinned)
         if os.geteuid() != 0:
