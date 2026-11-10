@@ -286,6 +286,36 @@ def credentials(name, username, password_stdin, otp, qr, otp_url):
     click.echo(f"Saved credentials for {name}. Sync explicitly with: evo cred sync push")
 
 
+@openvpn_group.command(
+    "bypass",
+    help="Hosts kept off the tunnel while the LAN reaches them. Each connect probes them first (TCP, port 443 "
+    "unless host:port) and pins those that answer to the physical gateway; elsewhere they go through the VPN.",
+)
+@click.argument("name")
+@click.argument("hosts", nargs=-1)
+@click.option("--remove", is_flag=True, help="Remove the given hosts instead of adding them.")
+@click.option("--clear", is_flag=True, help="Remove every host.")
+def bypass(name, hosts, remove, clear):
+    profile = _guard(vpn.get_profile, name)
+    current = list(profile.get("bypass") or [])
+    given = [_guard(vpn.parse_bypass, host) for host in hosts]
+    if clear:
+        current = []
+    elif remove:
+        current = [host for host in current if host not in given]
+    else:
+        current = list(dict.fromkeys([*current, *given]))
+    if clear or given:
+        if current:
+            profile["bypass"] = current
+        else:
+            profile.pop("bypass", None)
+        _guard(vpn.save_profile, name, profile)
+    click.echo("\n".join(current) if current else f"{name}: no bypass hosts.")
+    if (clear or given) and _guard(vpn.request, name)["state"] != "STOPPED":
+        click.echo("Reconnect for the change to apply.", err=True)
+
+
 @openvpn_group.command("otp", help="Print the current OTP for one explicitly selected profile (sensitive output).")
 @click.argument("name", required=False)
 def otp_code(name):

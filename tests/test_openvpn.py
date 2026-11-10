@@ -44,6 +44,7 @@ def test_commands_registered():
         "status",
         "disconnect",
         "log",
+        "bypass",
     }
 
 
@@ -204,15 +205,18 @@ def test_split_tunnel_pins_its_server_around_openvpn(tmp_path, monkeypatch, plat
 
 
 @pytest.mark.parametrize(
-    "output,gateway",
+    "platform,output,gateway",
     [
-        ("   route to: 192.0.2.53\n    gateway: 192.0.2.1\n  interface: en0\n", "192.0.2.1"),
+        ("darwin", "   route to: 192.0.2.53\n    gateway: 192.0.2.1\n  interface: en0\n", "192.0.2.1"),
         # On-link: no gateway line.
-        ("   route to: 198.51.100.1\n  interface: en0\n      flags: <UP,HOST,DONE,LLINFO>\n", None),
-        ("", None),
+        ("darwin", "   route to: 198.51.100.1\n  interface: en0\n      flags: <UP,HOST,DONE,LLINFO>\n", None),
+        ("darwin", "", None),
+        ("linux", "192.0.2.53 via 192.0.2.1 dev wlan0 src 192.0.2.7 uid 1000\n    cache\n", "192.0.2.1"),
+        ("linux", "198.51.100.1 dev wlan0 src 198.51.100.7 uid 1000\n    cache\n", None),
     ],
 )
-def test_gateway_to_reads_the_route(monkeypatch, output, gateway):
+def test_gateway_to_reads_the_route(monkeypatch, platform, output, gateway):
+    monkeypatch.setattr(vpn.sys, "platform", platform)
     monkeypatch.setattr(vpn.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, output, ""))
     assert vpn.gateway_to("192.0.2.53") == gateway
 
@@ -257,6 +261,87 @@ def test_worker_pins_the_lan_resolvers_on_macos(store, monkeypatch, platform, pi
     monkeypatch.setattr(vpn.subprocess, "Popen", popen)
     vpn.worker("m1", 10)
     assert seen == pinned
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("Chat.Example.com", "chat.example.com"),
+        ("api-1.example.com:8443", "api-1.example.com:8443"),
+        ("api.example.com:443", "api.example.com"),
+        ("192.0.2.10", "192.0.2.10"),
+        ("bad_host.example", None),
+        ("-lead.example", None),
+        ("a.example:0", None),
+        ("a.example:http", None),
+        ("a.example;reboot", None),
+        ("", None),
+    ],
+)
+def test_parse_bypass(value, expected):
+    if expected is None:
+        with pytest.raises(CredentialError):
+            vpn.parse_bypass(value)
+    else:
+        assert vpn.parse_bypass(value) == expected
+
+
+def test_lan_bypass_pins_only_what_the_lan_answers(monkeypatch):
+    names = {
+        "chat.example": ["192.0.2.10", "192.0.2.11"],
+        "api.example": ["192.0.2.20"],
+        "far.example": ["198.51.100.5"],
+    }
+    monkeypatch.setattr(vpn, "default_gateway", lambda: "192.0.2.1")
+    monkeypatch.setattr(vpn, "remote_addresses", lambda hosts: names.get(hosts[0], []))
+    # 198.51.100.5 is behind another gateway (a tunnel already up): never pinned to the LAN's.
+    monkeypatch.setattr(vpn, "gateway_to", lambda address: "10.8.0.1" if address == "198.51.100.5" else "192.0.2.1")
+    probed = []
+
+    def connect(target, timeout):
+        probed.append(target)
+        if target == ("192.0.2.11", 443) or target[0] == "198.51.100.5":
+            raise OSError("no answer")
+        return io.BytesIO()
+
+    monkeypatch.setattr(vpn.socket, "create_connection", connect)
+    found = vpn.lan_bypass(["chat.example", "api.example:8443", "far.example", "gone.example"])
+    assert found == ["192.0.2.10", "192.0.2.20"]
+    assert ("192.0.2.20", 8443) in probed and all(address != "198.51.100.5" for address, _ in probed)
+    monkeypatch.setattr(vpn, "default_gateway", lambda: None)
+    assert vpn.lan_bypass(["chat.example"]) == []
+
+
+def test_bypass_command_adds_removes_and_clears(store, monkeypatch):
+    vpn.save_profile("m1", {"config": CERT_ONLY})
+    runner = CliRunner()
+    result = runner.invoke(cli, ["openvpn", "bypass", "m1", "Chat.example", "api.example:8443", "chat.example"])
+    assert result.exit_code == 0, result.output
+    assert vpn.get_profile("m1")["bypass"] == ["chat.example", "api.example:8443"]
+    assert runner.invoke(cli, ["openvpn", "bypass", "m1"]).output.split() == ["chat.example", "api.example:8443"]
+    assert runner.invoke(cli, ["openvpn", "bypass", "m1", "bad_host"]).exit_code == 1
+    runner.invoke(cli, ["openvpn", "bypass", "m1", "--remove", "chat.example"])
+    assert vpn.get_profile("m1")["bypass"] == ["api.example:8443"]
+    assert "no bypass hosts" in runner.invoke(cli, ["openvpn", "bypass", "m1", "--clear"]).output
+    assert "bypass" not in vpn.get_profile("m1")
+
+
+def test_worker_pins_the_bypass_hosts_the_lan_reaches(store, monkeypatch):
+    vpn.save_profile("m1", {"config": CERT_ONLY, "bypass": ["chat.example"]})
+    monkeypatch.setattr(sys, "stdin", io.StringIO("\n"))
+    monkeypatch.setattr(vpn.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(vpn.shutil, "which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr(vpn.sys, "platform", "linux")
+    monkeypatch.setattr(vpn, "lan_bypass", lambda entries: ["192.0.2.10"] if entries == ["chat.example"] else [])
+    seen = []
+    monkeypatch.setattr(vpn, "pin_remotes", lambda command, hosts: seen.append(hosts) or command)
+
+    def popen(command, **_):
+        raise OSError("stop before running anything")
+
+    monkeypatch.setattr(vpn.subprocess, "Popen", popen)
+    vpn.worker("m1", 10)
+    assert seen == [["192.0.2.10"]]
 
 
 def test_no_pin_without_a_physical_gateway_or_address(monkeypatch):
