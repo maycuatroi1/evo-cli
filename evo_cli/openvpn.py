@@ -925,6 +925,12 @@ def worker(name, timeout):
                                 publish()
         if stopping:
             state = {"profile": name, "state": "STOPPED"}
+        elif management is None:
+            # --management-client connects back before OpenVPN touches the network, so it never ran.
+            raise CredentialError(
+                "OpenVPN never started: sudo refused the password (run connect again and retype it), "
+                "or OpenVPN rejected its options."
+            )
         else:
             reason = f" ({state['last_reason']})" if state.get("last_reason") else ""
             raise CredentialError(

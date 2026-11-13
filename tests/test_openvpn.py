@@ -891,6 +891,55 @@ def test_connect_stacks_a_split_tunnel_beside_a_full_one_only(store, monkeypatch
     assert "default route" not in result.output and started, result.output
 
 
+def test_connect_asks_for_sudo_when_the_workers_session_has_no_cached_password(store, monkeypatch):
+    # sudo caches a password per terminal; the worker runs in its own session, where that cache does not reach.
+    vpn.save_profile("m1", {"config": CONFIG, "username": "u", "password": "p"})
+    monkeypatch.setattr("evo_cli.commands.openvpn.shutil.which", lambda _: "/fake/openvpn")
+    monkeypatch.setattr("evo_cli.commands.openvpn.os.geteuid", lambda: 501)
+    checks, written = [], []
+    run = subprocess.run
+
+    def checking(command, **kwargs):
+        if command[:2] != ["sudo", "-n"]:
+            return run(command, **kwargs)
+        checks.append(kwargs.get("start_new_session"))
+        return subprocess.CompletedProcess(command, 1)
+
+    class Exited:
+        class stdin:
+            write, close = written.append, staticmethod(lambda: None)
+
+        def poll(self):
+            return 1
+
+    monkeypatch.setattr("evo_cli.commands.openvpn.subprocess.run", checking)
+    monkeypatch.setattr("evo_cli.commands.openvpn.getpass.getpass", lambda _: "sudo-secret")
+    monkeypatch.setattr("evo_cli.commands.openvpn.subprocess.Popen", lambda command, **_: Exited())
+    result = CliRunner().invoke(cli, ["openvpn", "connect", "m1", "--no-watch"])
+    assert checks == [True] and written == [b"sudo-secret\n"], result.output
+    assert "sudo-secret" not in result.output
+
+
+def test_worker_says_openvpn_never_started_when_sudo_refuses(store, monkeypatch):
+    vpn.save_profile("m1", {"config": CONFIG, "username": "u", "password": "p"})
+    monkeypatch.setattr(sys, "stdin", io.StringIO("wrong\n"))
+    monkeypatch.setattr(vpn.os, "geteuid", lambda: 501)
+    monkeypatch.setattr(vpn.shutil, "which", lambda _: "/fake/openvpn")
+    popen = subprocess.Popen
+    refused = "import sys; sys.stdin.read(); raise SystemExit(1)"
+    started = []
+
+    def sudo(command, **kwargs):
+        started.append(command)
+        return popen([sys.executable, "-c", refused], **kwargs)
+
+    monkeypatch.setattr(vpn.subprocess, "Popen", sudo)
+    vpn.worker("m1", 10)
+    state = json.loads(Path(str(vpn.session_path("m1")) + ".json").read_text())
+    assert started[0][:2] == ["sudo", "-S"]
+    assert state["state"] == "FAILED" and state["error"].startswith("OpenVPN never started: sudo refused")
+
+
 def test_cert_only_profile_connects_and_lists_without_credentials(store, monkeypatch):
     vpn.save_profile("cert", {"config": CERT_ONLY})
     vpn.save_profile("login", {"config": CONFIG})
