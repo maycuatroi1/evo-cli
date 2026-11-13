@@ -370,6 +370,19 @@ def _disconnect(name):
     click.echo(f"{name}: stopped (OpenVPN Connect profiles unchanged).")
 
 
+def _sudo_needs_password():
+    """Whether sudo will ask the worker for a password, checked where the worker runs: in its own session.
+
+    sudo caches a password per terminal by default, and the worker has none, so a password typed in this
+    terminal a minute ago does not reach it. Asked from here, `sudo -n` would pass and the worker would get
+    an empty password; OpenVPN would then never start.
+    """
+    check = subprocess.run(
+        ["sudo", "-n", "true"], stdin=subprocess.DEVNULL, capture_output=True, start_new_session=True, check=False
+    )
+    return check.returncode != 0
+
+
 @openvpn_group.command(
     "connect", help="Connect in the background (OTP-aware worker), then show live status; Ctrl-C leaves it running."
 )
@@ -406,7 +419,7 @@ def connect(name, timeout, sudo_password_stdin, watch):
     if os.geteuid() != 0:
         if sudo_password_stdin:
             password = sys.stdin.readline().rstrip("\n")
-        elif subprocess.run(["sudo", "-n", "true"], capture_output=True, check=False).returncode:
+        elif _sudo_needs_password():
             password = getpass.getpass("sudo password (not stored): ")
     state_path = Path(str(_guard(vpn.session_path, name)) + ".json")
     state_path.unlink(missing_ok=True)
