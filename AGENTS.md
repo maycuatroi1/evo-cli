@@ -35,7 +35,7 @@ and to load existing ones. Never hardcode secrets in the repo.
 - Install: `pip install -e .[test]`
 - Lint / format: `make lint` / `make fmt` (ruff)
 - Test: `make test` (pytest + coverage)
-- Version lives in `evo_cli/VERSION`, bumped via `bumpversion`.
+- Released versions are the `v*` tags. Every push to main runs Auto Release, which bumps from the newest tag, publishes to PyPI and pushes only the tag (the default-branch guard blocks workflow pushes to main), so `evo_cli/VERSION` on main lags. Do not bump it by hand.
 
 ## Adding a command
 
