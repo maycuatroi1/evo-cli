@@ -1,8 +1,16 @@
 name: Auto Release to PyPI
 
+# Every push to main releases. The default-branch guard on main lets no workflow push to it, so the release never
+# does: it bumps from the newest v* tag (or evo_cli/VERSION on main, if a PR set that higher), commits the bump off
+# main, and pushes only the tag. evo_cli/VERSION on main therefore lags; the v* tags are the released versions.
 on:
   push:
     branches: [main]
+
+# Two merges in a row must not compute the same version; the second run starts once the first has pushed its tag.
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
 
 jobs:
   auto-release:
@@ -23,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install build twine bumpversion
+          pip install build twine
 
       - name: Configure Git
         run: |
@@ -32,19 +40,42 @@ jobs:
 
       - name: Bump version
         run: |
-          # Determine version bump type based on commit messages
           COMMIT_MSG=$(git log -1 --pretty=%B)
           if [[ "$COMMIT_MSG" == *"BREAKING CHANGE"* ]]; then
-            bumpversion major
+            PART="major"
           elif [[ "$COMMIT_MSG" == *"feat"* ]]; then
-            bumpversion minor
+            PART="minor"
           else
-            bumpversion patch
+            PART="patch"
           fi
 
-          # Extract the new version
-          NEW_VERSION=$(cat evo_cli/VERSION)
-          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          LATEST_TAG=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)
+          ON_MAIN=$(tr -d '[:space:]' < evo_cli/VERSION)
+          BASE=$(printf '%s\n%s\n' "${LATEST_TAG#v}" "$ON_MAIN" | sed '/^$/d' | sort -V | tail -1)
+          NEW_VERSION=$(python -c '
+          import sys
+          major, minor, patch = map(int, sys.argv[1].split("."))
+          part = sys.argv[2]
+          if part == "major":
+              major, minor, patch = major + 1, 0, 0
+          elif part == "minor":
+              minor, patch = minor + 1, 0
+          else:
+              patch += 1
+          print(f"{major}.{minor}.{patch}")
+          ' "$BASE" "$PART")
+
+          echo "$NEW_VERSION" > evo_cli/VERSION
+          perl -pi -e "s/^current_version = .*/current_version = $NEW_VERSION/" .bumpversion.cfg
+          git commit -am "Bump version: $BASE → $NEW_VERSION"
+          git tag "v$NEW_VERSION"
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+          echo "PREVIOUS_TAG=$LATEST_TAG" >> "$GITHUB_ENV"
+
+      # The tag claims the version before PyPI gets it: should the upload fail, the next run bumps past it instead of
+      # trying to publish a version PyPI already holds.
+      - name: Push the release tag
+        run: git push origin "refs/tags/v$NEW_VERSION"
 
       - name: Build package
         run: |
@@ -59,12 +90,10 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          # Generate a changelog from the commits since last tag
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 || echo "")
           if [ -z "$PREVIOUS_TAG" ]; then
             CHANGELOG=$(git log --oneline)
           else
-            CHANGELOG=$(git log --oneline ${PREVIOUS_TAG}..HEAD)
+            CHANGELOG=$(git log --oneline "${PREVIOUS_TAG}..HEAD")
           fi
           echo "$CHANGELOG" > release_notes.md
 
@@ -75,7 +104,3 @@ jobs:
           name: Release v${{ env.NEW_VERSION }}
           body_path: release_notes.md
           generate_release_notes: true
-
-      - name: Push version update
-        run: |
-          git push --follow-tags
