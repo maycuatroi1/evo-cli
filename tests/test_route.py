@@ -455,6 +455,57 @@ def test_forgetting_the_last_host_removes_the_bypass(tmp_path, monkeypatch):
     assert removed == [True]
 
 
+def _fake_launchctl(calls, bootstrap_codes):
+    """launchctl whose bootstraps answer with ``bootstrap_codes`` in turn; every other verb succeeds."""
+    codes = iter(bootstrap_codes)
+
+    def run(*args):
+        calls.append(args[0])
+        code = next(codes) if args[0] == "bootstrap" else 0
+        stderr = "Bootstrap failed: 5: Input/output error" if code else ""
+        return subprocess.CompletedProcess(["launchctl", *args], code, "", stderr)
+
+    return run
+
+
+def test_bootstrap_retries_while_launchd_still_holds_the_booted_out_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(_spoofdpi.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(_spoofdpi.time, "sleep", lambda seconds: None)
+    loaded = iter([True, False])
+    monkeypatch.setattr(_spoofdpi, "_loaded", lambda label=_spoofdpi.LABEL: next(loaded))
+    calls = []
+    monkeypatch.setattr(_spoofdpi, "_launchctl", _fake_launchctl(calls, [5, 5, 0]))
+    assert _spoofdpi._bootstrap().returncode == 0
+    assert calls == ["bootstrap"] * 3
+
+
+def test_a_failed_restart_clears_the_system_proxy(tmp_path, monkeypatch):
+    monkeypatch.setattr(_spoofdpi.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(_spoofdpi, "BOOTSTRAP_SECONDS", 0)
+    monkeypatch.setattr(_spoofdpi, "_loaded", lambda label=_spoofdpi.LABEL: False)
+    monkeypatch.setattr(_spoofdpi, "_listening", lambda timeout=0.5: False)
+    monkeypatch.setattr(_spoofdpi, "_launchctl", _fake_launchctl([], [5]))
+    cleared = []
+    monkeypatch.setattr(_spoofdpi, "clear_system_proxy", lambda: cleared.append(True))
+    with pytest.raises(RuntimeError, match="Input/output error"):
+        _spoofdpi._start(reload=True)
+    assert cleared == [True]
+
+
+def test_a_proxy_port_that_never_comes_back_clears_the_system_proxy(monkeypatch):
+    monkeypatch.setattr(_spoofdpi, "_launch", lambda reload: False)
+    cleared = []
+    monkeypatch.setattr(_spoofdpi, "clear_system_proxy", lambda: cleared.append(True))
+    assert _spoofdpi._start(reload=False) is False
+    assert cleared == [True]
+
+
+def test_a_working_restart_keeps_the_system_proxy(monkeypatch):
+    monkeypatch.setattr(_spoofdpi, "_launch", lambda reload: True)
+    monkeypatch.setattr(_spoofdpi, "clear_system_proxy", lambda: pytest.fail("cleared a working proxy"))
+    assert _spoofdpi._start(reload=False) is True
+
+
 def test_forgetting_one_host_restarts_with_the_rest(tmp_path, monkeypatch):
     monkeypatch.setenv("EVO_ROUTE_HOME", str(tmp_path))
     _spoofdpi._write_hosts(["medium.com", "x.com"])
