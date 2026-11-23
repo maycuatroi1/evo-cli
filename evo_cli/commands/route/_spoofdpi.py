@@ -57,6 +57,8 @@ RESOLVERS = {"https": f"DoH ({DOH_URL})", "system": "the system resolver"}
 DNS_SETTINGS = "/var/run/resolv.conf"
 # Catches a network that was not answering yet when its settings arrived.
 DNS_RECHECK_SECONDS = 120
+# How long launchd gets to drop a booted-out job before evo stops retrying its bootstrap.
+BOOTSTRAP_SECONDS = 10
 
 
 def config(dns_mode):
@@ -214,8 +216,22 @@ def _wait(condition, seconds):
     return condition()
 
 
-def _start(reload):
-    """Start or restart the agent and wait for the proxy port. SpoofDPI reads hosts.txt only when it starts."""
+def _bootstrap(label=LABEL):
+    """Load an agent.
+
+    launchctl bootout returns before launchd has let go of the job, and a bootstrap in that window fails
+    with "5: Input/output error". So wait for the old job to go, then retry until the new one loads.
+    """
+    _wait(lambda: not _loaded(label), BOOTSTRAP_SECONDS)
+    deadline = time.monotonic() + BOOTSTRAP_SECONDS
+    while True:
+        result = _launchctl("bootstrap", _domain(), str(agent_path(label)))
+        if result.returncode == 0 or time.monotonic() >= deadline:
+            return result
+        time.sleep(0.5)
+
+
+def _launch(reload):
     if _loaded() and not reload:
         _launchctl("kickstart", "-k", f"{_domain()}/{LABEL}")
     else:
@@ -224,10 +240,26 @@ def _start(reload):
             _wait(lambda: not _listening(), 5)
         if _listening():
             raise RuntimeError(f"Something else already listens on {listen()}.")
-        result = _launchctl("bootstrap", _domain(), str(agent_path()))
+        result = _bootstrap()
         if result.returncode != 0:
             raise RuntimeError(f"launchctl bootstrap failed: {(result.stderr or result.stdout).strip()}")
     return _wait(_listening, 10)
+
+
+def _start(reload):
+    """Start or restart the agent and wait for the proxy port. SpoofDPI reads hosts.txt only when it starts.
+
+    A restart stops the proxy the system already points at. If the port does not come back, the system
+    proxy is cleared: left pointing at nothing, it takes every site down, not only the opened ones.
+    """
+    try:
+        up = _launch(reload)
+    except RuntimeError:
+        clear_system_proxy()
+        raise
+    if not up:
+        clear_system_proxy()
+    return up
 
 
 def _networksetup(*args):
@@ -417,7 +449,7 @@ def _watch_network():
     """(Re)load the DNS agent; launchd runs it once on load, then on every change of network."""
     if _write_dns_agent() or not _loaded(DNS_LABEL):
         _launchctl("bootout", f"{_domain()}/{DNS_LABEL}")
-        _launchctl("bootstrap", _domain(), str(agent_path(DNS_LABEL)))
+        _bootstrap(DNS_LABEL)
 
 
 def service_state():
